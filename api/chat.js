@@ -28,25 +28,22 @@ module.exports = async function handler(req, res) {
     const { message, conversationHistory = [] } = req.body;
 
     // Step 1: Send to Claude for jewelry consultation
-    const claudeResponse = await anthropic.messages.create({
-      model: 'claude-3-5-sonnet-20241022',
-      max_tokens: 500,
-      messages: [
-        {
-          role: 'system',
-          content: `You are a jewelry design consultant. Help customers describe their ideal piece of jewelry. Ask clarifying questions about:
-          - Type of jewelry (ring, necklace, earrings, bracelet)
-          - Metal preference (gold, silver, platinum, rose gold)
-          - Gemstones or diamonds
-          - Style (vintage, modern, minimalist, ornate)
-          - Occasion/purpose
-          
-          When you have enough details, end your response with "GENERATE_IMAGE:" followed by a detailed image prompt for DALL-E.`
-        },
-        ...conversationHistory,
-        { role: 'user', content: message }
-      ],
-    });
+   const claudeResponse = await anthropic.messages.create({
+  model: 'claude-3-5-sonnet-20241022',
+  max_tokens: 500,
+  system: `You are a jewelry design consultant. Help customers describe their ideal piece of jewelry. Ask clarifying questions about:
+- Type of jewelry (ring, necklace, earrings, bracelet)
+- Metal preference (gold, silver, platinum, rose gold)  
+- Gemstones or diamonds
+- Style (vintage, modern, minimalist, ornate)
+- Occasion/purpose
+
+When you have enough details, end your response with "GENERATE_IMAGE:" followed by a detailed image prompt for DALL-E.`,
+  messages: [
+    ...conversationHistory,
+    { role: 'user', content: message }
+  ]
+});
 
     const claudeMessage = claudeResponse.content[0].text;
 
