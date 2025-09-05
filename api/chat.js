@@ -76,8 +76,14 @@ module.exports = async function handler(req, res) {
       conversationId: Date.now() // Simple conversation tracking
     });
 
-  } catch (error) {
-    console.error('Error:', error);
-    res.status(500).json({ error: 'Something went wrong' });
-  }
+} catch (error) {
+  console.error('Full error details:', error);
+  res.status(500).json({ 
+    error: 'API Error',
+    message: error.message,
+    type: error.constructor.name,
+    hasAnthropicKey: !!process.env.ANTHROPIC_API_KEY,
+    hasOpenAIKey: !!process.env.OPENAI_API_KEY
+  });
+}
 };
