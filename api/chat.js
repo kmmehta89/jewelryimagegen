@@ -40,7 +40,7 @@ module.exports = async function handler(req, res) {
 
 When you have enough details, end your response with "GENERATE_IMAGE:" followed by a detailed image prompt for DALL-E.`,
   messages: [
-    ...conversationHistory,
+    ...conversationHistory.filter(msg => msg.role !== 'system'),
     { role: 'user', content: message }
   ]
 });
