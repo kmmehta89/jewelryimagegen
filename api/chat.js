@@ -29,7 +29,7 @@ module.exports = async function handler(req, res) {
 
     // Step 1: Send to Claude for jewelry consultation
    const claudeResponse = await anthropic.messages.create({
-  model: 'claude-3-5-sonnet-20241022',
+  model: 'claude-sonnet-4-20250514',
   max_tokens: 500,
   system: `You are a jewelry design consultant. Help customers describe their ideal piece of jewelry. Ask clarifying questions about:
 - Type of jewelry (ring, necklace, earrings, bracelet)
