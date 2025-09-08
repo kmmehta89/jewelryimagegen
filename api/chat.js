@@ -29,7 +29,7 @@ module.exports = async function handler(req, res) {
     
     // Step 1: Send to Claude for jewelry consultation
     const claudeResponse = await anthropic.messages.create({
-      model: 'claude-3-5-sonnet-latest', // Fixed: removed extra comma
+      model: 'claude-sonnet-4-20250514',
       max_tokens: 1000,
       system: `You are a jewelry design consultant. When someone describes jewelry, always end with "GENERATE_IMAGE: [detailed description for DALL-E]"`,
       messages: [
