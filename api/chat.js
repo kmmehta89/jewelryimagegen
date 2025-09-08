@@ -39,6 +39,7 @@ module.exports = async function handler(req, res) {
     });
     
     const claudeMessage = claudeResponse.content[0].text;
+    console.log('Full Claude response:', claudeMessage);
     
     // Step 2: Check if Claude wants to generate an image
     let imageUrl = null;
@@ -76,4 +77,4 @@ module.exports = async function handler(req, res) {
       hasOpenAIKey: !!process.env.OPENAI_API_KEY
     });
   }
-}
+};
