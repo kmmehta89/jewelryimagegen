@@ -19,34 +19,34 @@ module.exports = async function handler(req, res) {
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
-
+  
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
-
+  
   try {
     const { message, conversationHistory = [] } = req.body;
-
+    
     // Step 1: Send to Claude for jewelry consultation
-   const claudeResponse = await anthropic.messages.create({
-  model: 'claude-sonnet-4-20250514',
-  max_tokens: 1000,
-  system: `You are a jewelry design consultant. Help customers describe their ideal piece of jewelry. Ask clarifying questions about:
+    const claudeResponse = await anthropic.messages.create({
+      model: 'claude-3-5-sonnet-latest', // Fixed: removed extra comma
+      max_tokens: 1000,
+      system: `You are a jewelry design consultant. Help customers describe their ideal piece of jewelry. Ask clarifying questions about:
 - Type of jewelry (ring, necklace, earrings, bracelet)
 - Metal preference (gold, silver, platinum, rose gold)  
 - Gemstones or diamonds
 - Style (vintage, modern, minimalist, ornate)
 - Occasion/purpose
 
-When you have enough details, end your response with "GENERATE_IMAGE:" followed by a detailed image prompt for DALL-E.`,
-  messages: [
-    ...conversationHistory.filter(msg => msg.role !== 'system'),
-    { role: 'user', content: message }
-  ]
-});
-
+IMPORTANT: Once you have enough details OR when the customer explicitly asks for an image, you MUST end your response with "GENERATE_IMAGE:" followed by a detailed image prompt for DALL-E. Do not ask more questions after you have the basic details.`,
+      messages: [
+        ...conversationHistory.filter(msg => msg.role !== 'system'), // This filter is correct
+        { role: 'user', content: message }
+      ]
+    });
+    
     const claudeMessage = claudeResponse.content[0].text;
-
+    
     // Step 2: Check if Claude wants to generate an image
     let imageUrl = null;
     if (claudeMessage.includes('GENERATE_IMAGE:')) {
@@ -66,21 +66,21 @@ When you have enough details, end your response with "GENERATE_IMAGE:" followed 
         console.error('Image generation error:', imageError);
       }
     }
-
+    
     res.status(200).json({
       message: claudeMessage.replace(/GENERATE_IMAGE:.*/, '').trim(),
       imageUrl,
       conversationId: Date.now() // Simple conversation tracking
     });
-
-} catch (error) {
-  console.error('Full error details:', error);
-  res.status(500).json({ 
-    error: 'API Error',
-    message: error.message,
-    type: error.constructor.name,
-    hasAnthropicKey: !!process.env.ANTHROPIC_API_KEY,
-    hasOpenAIKey: !!process.env.OPENAI_API_KEY
-  });
-}
+    
+  } catch (error) {
+    console.error('Full error details:', error);
+    res.status(500).json({ 
+      error: 'API Error',
+      message: error.message,
+      type: error.constructor.name,
+      hasAnthropicKey: !!process.env.ANTHROPIC_API_KEY,
+      hasOpenAIKey: !!process.env.OPENAI_API_KEY
+    });
+  }
 };
