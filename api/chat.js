@@ -63,10 +63,9 @@ Never skip this. Always include GENERATE_IMAGE: followed by a detailed descripti
       
       try {
         const imageResponse = await openai.images.generate({
-          model: "dall-e-3",
+          model: "dall-e-2", // Try DALL-E 2 instead
           prompt: `Professional jewelry photography: ${imagePrompt}. High quality, clean white background, studio lighting, detailed and realistic.`,
-          size: "1024x1024",
-          quality: "standard",
+          size: "512x512", // DALL-E 2 uses different sizes
           n: 1,
         });
         
