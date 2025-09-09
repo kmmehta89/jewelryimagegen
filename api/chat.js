@@ -56,8 +56,8 @@ Never skip this. Always include GENERATE_IMAGE: followed by a detailed descripti
     // Step 2: Check if Claude wants to generate an image
     let imageUrl = null;
     
-    // TEMPORARY: Disable image generation until OpenAI billing is resolved
-    const forceImageGeneration = false;
+    // TEMPORARY: Force image generation for testing OpenAI billing
+    const forceImageGeneration = true;
     
     if (claudeMessage.includes('GENERATE_IMAGE:') || forceImageGeneration) {
       let imagePrompt;
