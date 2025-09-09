@@ -37,7 +37,7 @@ module.exports = async function handler(req, res) {
     
     // Step 1: Send to Claude for jewelry consultation
     const claudeResponse = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514', // Fixed: removed extra comma
+      model: 'claude-3-5-sonnet-latest', // Fixed: removed extra comma
       max_tokens: 1000,
       system: `You are a jewelry design consultant. For EVERY response about jewelry, you MUST always end with exactly this format:
 
@@ -53,20 +53,20 @@ Never skip this. Always include GENERATE_IMAGE: followed by a detailed descripti
     const claudeMessage = claudeResponse.content[0].text;
     console.log('Full Claude response:', claudeMessage);
     
-    // Step 2: Check if Claude wants to generate an image
+    // Step 2: Force image generation for testing (bypass Claude's trigger)
     let imageUrl = null;
     
-    // TEMPORARY: Force image generation for testing OpenAI billing
-    const forceImageGeneration = true;
+    // TESTING: Always generate an image regardless of Claude's response
+    const alwaysGenerateImage = true;
     
-    if (claudeMessage.includes('GENERATE_IMAGE:') || forceImageGeneration) {
+    if (claudeMessage.includes('GENERATE_IMAGE:') || alwaysGenerateImage) {
       let imagePrompt;
       
       if (claudeMessage.includes('GENERATE_IMAGE:')) {
         imagePrompt = claudeMessage.split('GENERATE_IMAGE:')[1].trim();
       } else {
-        // Use the user's message as the prompt for testing
-        imagePrompt = message;
+        // For testing: use a default jewelry prompt
+        imagePrompt = "elegant diamond ring, professional jewelry photography, white background, studio lighting";
       }
       
       try {
