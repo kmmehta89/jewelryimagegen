@@ -25,6 +25,14 @@ module.exports = async function handler(req, res) {
   }
   
   try {
+    // DEBUGGING: Check which OpenAI account this API key belongs to
+    try {
+      const accountInfo = await openai.models.list();
+      console.log('OpenAI API Key is working, models available:', accountInfo.data.length);
+    } catch (apiKeyError) {
+      console.log('OpenAI API Key error:', apiKeyError.message);
+    }
+
     const { message, conversationHistory = [] } = req.body;
     
     // Step 1: Send to Claude for jewelry consultation
@@ -48,8 +56,8 @@ Never skip this. Always include GENERATE_IMAGE: followed by a detailed descripti
     // Step 2: Check if Claude wants to generate an image
     let imageUrl = null;
     
-    // TEMPORARY: Force image generation for debugging billing issue
-    const forceImageGeneration = true;
+    // TEMPORARY: Disable image generation until OpenAI billing is resolved
+    const forceImageGeneration = false;
     
     if (claudeMessage.includes('GENERATE_IMAGE:') || forceImageGeneration) {
       let imagePrompt;
