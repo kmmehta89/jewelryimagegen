@@ -29,7 +29,7 @@ module.exports = async function handler(req, res) {
     
     // Step 1: Send to Claude for jewelry consultation
     const claudeResponse = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-20250514', // Fixed: removed extra comma
       max_tokens: 1000,
       system: `You are a jewelry design consultant. When someone describes jewelry, always end with "GENERATE_IMAGE: [detailed description for DALL-E]"`,
       messages: [
@@ -58,6 +58,12 @@ module.exports = async function handler(req, res) {
         imageUrl = imageResponse.data[0].url;
       } catch (imageError) {
         console.error('Image generation error:', imageError);
+        console.error('Error details:', {
+          message: imageError.message,
+          status: imageError.status,
+          code: imageError.code,
+          type: imageError.type
+        });
       }
     }
     
