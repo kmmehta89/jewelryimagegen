@@ -37,7 +37,7 @@ module.exports = async function handler(req, res) {
     
     // Step 1: Send to Claude for jewelry consultation
     const claudeResponse = await anthropic.messages.create({
-      model: 'claude-3-5-sonnet-latest', // Fixed: removed extra comma
+      model: 'claude-sonnet-4-20250514', // Fixed: removed extra comma
       max_tokens: 1000,
       system: `You are a jewelry design consultant. For EVERY response about jewelry, you MUST always end with exactly this format:
 
