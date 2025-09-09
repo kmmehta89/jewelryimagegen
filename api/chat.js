@@ -29,7 +29,7 @@ module.exports = async function handler(req, res) {
     
     // Step 1: Send to Claude for jewelry consultation
     const claudeResponse = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514', // Fixed: removed extra comma
+      model: 'claude-3-5-sonnet-latest', // Fixed: removed extra comma
       max_tokens: 1000,
       system: `You are a jewelry design consultant. For EVERY response about jewelry, you MUST always end with exactly this format:
 
@@ -62,6 +62,10 @@ Never skip this. Always include GENERATE_IMAGE: followed by a detailed descripti
       }
       
       try {
+        console.log('Attempting image generation with prompt:', imagePrompt);
+        console.log('OpenAI API Key exists:', !!process.env.OPENAI_API_KEY);
+        console.log('API Key prefix:', process.env.OPENAI_API_KEY?.substring(0, 10) + '...');
+        
         const imageResponse = await openai.images.generate({
           model: "dall-e-2", // Try DALL-E 2 instead
           prompt: `Professional jewelry photography: ${imagePrompt}. High quality, clean white background, studio lighting, detailed and realistic.`,
