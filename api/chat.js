@@ -31,7 +31,11 @@ module.exports = async function handler(req, res) {
     const claudeResponse = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514', // Fixed: removed extra comma
       max_tokens: 1000,
-      system: `You are a jewelry design consultant. When someone describes jewelry, always end with "GENERATE_IMAGE: [detailed description for DALL-E]"`,
+      system: `You are a jewelry design consultant. For EVERY response about jewelry, you MUST always end with exactly this format:
+
+GENERATE_IMAGE: [detailed description for jewelry photography]
+
+Never skip this. Always include GENERATE_IMAGE: followed by a detailed description.`,
       messages: [
         ...conversationHistory.filter(msg => msg.role !== 'system'), // This filter is correct
         { role: 'user', content: message }
@@ -43,8 +47,19 @@ module.exports = async function handler(req, res) {
     
     // Step 2: Check if Claude wants to generate an image
     let imageUrl = null;
-    if (claudeMessage.includes('GENERATE_IMAGE:')) {
-      const imagePrompt = claudeMessage.split('GENERATE_IMAGE:')[1].trim();
+    
+    // TEMPORARY: Force image generation for debugging billing issue
+    const forceImageGeneration = true;
+    
+    if (claudeMessage.includes('GENERATE_IMAGE:') || forceImageGeneration) {
+      let imagePrompt;
+      
+      if (claudeMessage.includes('GENERATE_IMAGE:')) {
+        imagePrompt = claudeMessage.split('GENERATE_IMAGE:')[1].trim();
+      } else {
+        // Use the user's message as the prompt for testing
+        imagePrompt = message;
+      }
       
       try {
         const imageResponse = await openai.images.generate({
