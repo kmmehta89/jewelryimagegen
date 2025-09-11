@@ -1,13 +1,13 @@
 // api/chat.js - Vercel serverless function
 const { Anthropic } = require('@anthropic-ai/sdk');
-const { OpenAI } = require('openai');
+const Replicate = require('replicate');
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+const replicate = new Replicate({
+  auth: process.env.REPLICATE_API_TOKEN,
 });
 
 module.exports = async function handler(req, res) {
@@ -37,7 +37,7 @@ GENERATE_IMAGE: [detailed description for jewelry photography]
 
 Only include the GENERATE_IMAGE instruction when you are discussing or recommending specific jewelry pieces that would benefit from a visual representation. For general questions about jewelry care, policies, or non-specific inquiries, do not include the image generation trigger and instead reply that your only capability is to create images of jewelry.
 
-The image description should be detailed and suitable for professional jewelry photography.`,
+The image description should be detailed and suitable for professional jewelry photography, including details about the jewelry type, materials, style, setting, and any specific design elements mentioned by the customer.`,
       messages: [
         ...conversationHistory.filter(msg => msg.role !== 'system'),
         { role: 'user', content: message }
@@ -56,38 +56,47 @@ The image description should be detailed and suitable for professional jewelry p
       try {
         console.log('Generating image with prompt:', imagePrompt);
         
-        // Use DALL-E 3 for better quality (falls back to DALL-E 2 if not available)
-        const imageResponse = await openai.images.generate({
-          model: "dall-e-3",
-          prompt: `Professional jewelry photography: ${imagePrompt}. High quality, clean white background, studio lighting, detailed and realistic, commercial product photography style.`,
-          size: "1024x1024",
-          quality: "standard",
-          n: 1,
-        });
+        // Use Replicate's Stable Diffusion for image generation
+        const output = await replicate.run(
+          "stability-ai/stable-diffusion:27b93a2413e7f36cd83da926f3656280b2931564ff050bf9575f1fdf9bcd7478",
+          {
+            input: {
+              prompt: `Professional jewelry photography: ${imagePrompt}. High quality, clean white background, studio lighting, detailed and realistic, commercial product photography style, 4K resolution`,
+              negative_prompt: "blurry, low quality, distorted, ugly, bad anatomy, watermark, text, signature",
+              width: 768,
+              height: 768,
+              num_inference_steps: 50,
+              guidance_scale: 7.5,
+              scheduler: "DPMSolverMultistep"
+            }
+          }
+        );
         
-        imageUrl = imageResponse.data[0].url;
-        console.log('Image generated successfully');
+        imageUrl = output[0]; // Replicate returns an array of URLs
+        console.log('Image generated successfully with Replicate');
         
       } catch (imageError) {
         console.error('Image generation error:', imageError);
         
-        // Fallback to DALL-E 2 if DALL-E 3 fails
-        if (imageError.code === 'model_not_found' || imageError.message.includes('dall-e-3')) {
-          try {
-            console.log('Falling back to DALL-E 2');
-            const fallbackResponse = await openai.images.generate({
-              model: "dall-e-2",
-              prompt: `Professional jewelry photography: ${imagePrompt}. High quality, clean white background, studio lighting.`,
-              size: "512x512",
-              n: 1,
-            });
-            
-            imageUrl = fallbackResponse.data[0].url;
-            console.log('Image generated with DALL-E 2 fallback');
-            
-          } catch (fallbackError) {
-            console.error('DALL-E 2 fallback also failed:', fallbackError);
-          }
+        // Fallback: Try a simpler model if the main one fails
+        try {
+          console.log('Falling back to simpler Stable Diffusion model');
+          const fallbackOutput = await replicate.run(
+            "stability-ai/stable-diffusion:db21e45d3f7023abc2a46ee38a23973f6dce16bb082a930b0c49861f96d1e5bf",
+            {
+              input: {
+                prompt: `Professional jewelry photography: ${imagePrompt}. Clean white background, studio lighting`,
+                width: 512,
+                height: 512
+              }
+            }
+          );
+          
+          imageUrl = fallbackOutput[0];
+          console.log('Image generated with fallback model');
+          
+        } catch (fallbackError) {
+          console.error('Fallback image generation also failed:', fallbackError);
         }
       }
     }
@@ -109,9 +118,9 @@ The image description should be detailed and suitable for professional jewelry p
       details: {
         type: error.constructor.name,
         hasAnthropicKey: !!process.env.ANTHROPIC_API_KEY,
-        hasOpenAIKey: !!process.env.OPENAI_API_KEY,
+        hasReplicateKey: !!process.env.REPLICATE_API_TOKEN,
         anthropicKeyPrefix: process.env.ANTHROPIC_API_KEY?.substring(0, 10) + '...',
-        openaiKeyPrefix: process.env.OPENAI_API_KEY?.substring(0, 10) + '...'
+        replicateKeyPrefix: process.env.REPLICATE_API_TOKEN?.substring(0, 10) + '...'
       }
     });
   }
