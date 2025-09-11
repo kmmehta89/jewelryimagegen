@@ -47,11 +47,34 @@ The image description should be detailed and suitable for professional jewelry p
     const claudeMessage = claudeResponse.content[0].text;
     console.log('Full Claude response:', claudeMessage);
     
-    // Step 2: Check if image generation is requested
+    // Step 2: Check if image generation is requested OR if it's a jewelry request
     let imageUrl = null;
     
-    if (claudeMessage.includes('GENERATE_IMAGE:')) {
-      const imagePrompt = claudeMessage.split('GENERATE_IMAGE:')[1].trim();
+    // Force image generation for jewelry-related requests
+    const isJewelryRequest = (
+      message.toLowerCase().includes('ring') ||
+      message.toLowerCase().includes('jewelry') ||
+      message.toLowerCase().includes('diamond') ||
+      message.toLowerCase().includes('necklace') ||
+      message.toLowerCase().includes('bracelet') ||
+      message.toLowerCase().includes('earring') ||
+      message.toLowerCase().includes('pendant') ||
+      message.toLowerCase().includes('engagement') ||
+      message.toLowerCase().includes('wedding') ||
+      message.toLowerCase().includes('generate') ||
+      message.toLowerCase().includes('create') ||
+      message.toLowerCase().includes('image')
+    );
+    
+    if (claudeMessage.includes('GENERATE_IMAGE:') || isJewelryRequest) {
+      let imagePrompt;
+      
+      if (claudeMessage.includes('GENERATE_IMAGE:')) {
+        imagePrompt = claudeMessage.split('GENERATE_IMAGE:')[1].trim();
+      } else {
+        // Create image prompt based on the user's original message
+        imagePrompt = `${message.replace(/generate|create|image|of|an?/gi, '').trim()}, professional jewelry photography style`;
+      }
       
       try {
         console.log('Generating image with prompt:', imagePrompt);
