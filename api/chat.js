@@ -25,27 +25,21 @@ module.exports = async function handler(req, res) {
   }
   
   try {
-    // DEBUGGING: Check which OpenAI account this API key belongs to
-    try {
-      const accountInfo = await openai.models.list();
-      console.log('OpenAI API Key is working, models available:', accountInfo.data.length);
-    } catch (apiKeyError) {
-      console.log('OpenAI API Key error:', apiKeyError.message);
-    }
-
     const { message, conversationHistory = [] } = req.body;
     
     // Step 1: Send to Claude for jewelry consultation
     const claudeResponse = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514', // Fixed: removed extra comma
+      model: 'claude-sonnet-4-20250514',
       max_tokens: 1000,
-      system: `You are a jewelry design consultant. For EVERY response about jewelry, you MUST always end with exactly this format:
+      system: `You are a jewelry designer. A retailer is asking you to create an image of a piece of jewelry based on a request from a consumer. Always end your response with this format:
 
 GENERATE_IMAGE: [detailed description for jewelry photography]
 
-Never skip this. Always include GENERATE_IMAGE: followed by a detailed description.`,
+Only include the GENERATE_IMAGE instruction when you are discussing or recommending specific jewelry pieces that would benefit from a visual representation. For general questions about jewelry care, policies, or non-specific inquiries, do not include the image generation trigger and instead reply that your only capability is to create images of jewelry.
+
+The image description should be detailed and suitable for professional jewelry photography.`,
       messages: [
-        ...conversationHistory.filter(msg => msg.role !== 'system'), // This filter is correct
+        ...conversationHistory.filter(msg => msg.role !== 'system'),
         { role: 'user', content: message }
       ]
     });
@@ -53,60 +47,72 @@ Never skip this. Always include GENERATE_IMAGE: followed by a detailed descripti
     const claudeMessage = claudeResponse.content[0].text;
     console.log('Full Claude response:', claudeMessage);
     
-    // Step 2: Force image generation for testing (bypass Claude's trigger)
+    // Step 2: Check if image generation is requested
     let imageUrl = null;
     
-    // TESTING: Always generate an image regardless of Claude's response
-    const alwaysGenerateImage = true;
-    
-    if (claudeMessage.includes('GENERATE_IMAGE:') || alwaysGenerateImage) {
-      let imagePrompt;
-      
-      if (claudeMessage.includes('GENERATE_IMAGE:')) {
-        imagePrompt = claudeMessage.split('GENERATE_IMAGE:')[1].trim();
-      } else {
-        // For testing: use a default jewelry prompt
-        imagePrompt = "elegant diamond ring, professional jewelry photography, white background, studio lighting";
-      }
+    if (claudeMessage.includes('GENERATE_IMAGE:')) {
+      const imagePrompt = claudeMessage.split('GENERATE_IMAGE:')[1].trim();
       
       try {
-        console.log('Attempting image generation with prompt:', imagePrompt);
-        console.log('OpenAI API Key exists:', !!process.env.OPENAI_API_KEY);
-        console.log('API Key prefix:', process.env.OPENAI_API_KEY?.substring(0, 10) + '...');
+        console.log('Generating image with prompt:', imagePrompt);
         
+        // Use DALL-E 3 for better quality (falls back to DALL-E 2 if not available)
         const imageResponse = await openai.images.generate({
-          model: "dall-e-2", // Try DALL-E 2 instead
-          prompt: `Professional jewelry photography: ${imagePrompt}. High quality, clean white background, studio lighting, detailed and realistic.`,
-          size: "512x512", // DALL-E 2 uses different sizes
+          model: "dall-e-3",
+          prompt: `Professional jewelry photography: ${imagePrompt}. High quality, clean white background, studio lighting, detailed and realistic, commercial product photography style.`,
+          size: "1024x1024",
+          quality: "standard",
           n: 1,
         });
         
         imageUrl = imageResponse.data[0].url;
+        console.log('Image generated successfully');
+        
       } catch (imageError) {
         console.error('Image generation error:', imageError);
-        console.error('Error details:', {
-          message: imageError.message,
-          status: imageError.status,
-          code: imageError.code,
-          type: imageError.type
-        });
+        
+        // Fallback to DALL-E 2 if DALL-E 3 fails
+        if (imageError.code === 'model_not_found' || imageError.message.includes('dall-e-3')) {
+          try {
+            console.log('Falling back to DALL-E 2');
+            const fallbackResponse = await openai.images.generate({
+              model: "dall-e-2",
+              prompt: `Professional jewelry photography: ${imagePrompt}. High quality, clean white background, studio lighting.`,
+              size: "512x512",
+              n: 1,
+            });
+            
+            imageUrl = fallbackResponse.data[0].url;
+            console.log('Image generated with DALL-E 2 fallback');
+            
+          } catch (fallbackError) {
+            console.error('DALL-E 2 fallback also failed:', fallbackError);
+          }
+        }
       }
     }
     
+    // Remove the GENERATE_IMAGE instruction from the response to user
+    const cleanMessage = claudeMessage.replace(/GENERATE_IMAGE:.*$/m, '').trim();
+    
     res.status(200).json({
-      message: claudeMessage.replace(/GENERATE_IMAGE:.*/, '').trim(),
+      message: cleanMessage,
       imageUrl,
-      conversationId: Date.now() // Simple conversation tracking
+      conversationId: Date.now()
     });
     
   } catch (error) {
-    console.error('Full error details:', error);
+    console.error('API Error:', error);
     res.status(500).json({ 
       error: 'API Error',
       message: error.message,
-      type: error.constructor.name,
-      hasAnthropicKey: !!process.env.ANTHROPIC_API_KEY,
-      hasOpenAIKey: !!process.env.OPENAI_API_KEY
+      details: {
+        type: error.constructor.name,
+        hasAnthropicKey: !!process.env.ANTHROPIC_API_KEY,
+        hasOpenAIKey: !!process.env.OPENAI_API_KEY,
+        anthropicKeyPrefix: process.env.ANTHROPIC_API_KEY?.substring(0, 10) + '...',
+        openaiKeyPrefix: process.env.OPENAI_API_KEY?.substring(0, 10) + '...'
+      }
     });
   }
 };
