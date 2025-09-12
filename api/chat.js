@@ -79,47 +79,70 @@ The image description should be detailed and suitable for professional jewelry p
       try {
         console.log('Generating image with prompt:', imagePrompt);
         
-        // Use Replicate's Stable Diffusion for image generation
+        // Use Google's Imagen model via Replicate
         const output = await replicate.run(
-          "stability-ai/stable-diffusion:27b93a2413e7f36cd83da926f3656280b2931564ff050bf9575f1fdf9bcd7478",
+          "google-deepmind/imagen-3-fast",
           {
             input: {
               prompt: `Professional jewelry photography: ${imagePrompt}. High quality, clean white background, studio lighting, detailed and realistic, commercial product photography style, 4K resolution`,
-              negative_prompt: "blurry, low quality, distorted, ugly, bad anatomy, watermark, text, signature",
-              width: 768,
-              height: 768,
-              num_inference_steps: 50,
-              guidance_scale: 7.5,
-              scheduler: "DPMSolverMultistep"
+              negative_prompt: "blurry, low quality, distorted, ugly, bad anatomy, watermark, text, signature, hands, fingers, people",
+              aspect_ratio: "1:1",
+              output_format: "webp",
+              output_quality: 90,
+              safety_tolerance: 2
             }
           }
         );
         
-        imageUrl = output[0]; // Replicate returns an array of URLs
-        console.log('Image generated successfully with Replicate');
+        imageUrl = output; // Imagen typically returns a single URL
+        console.log('Image generated successfully with Google Imagen');
         
       } catch (imageError) {
         console.error('Image generation error:', imageError);
         
-        // Fallback: Try a simpler model if the main one fails
+        // Fallback: Try the regular Imagen model if fast version fails
         try {
-          console.log('Falling back to simpler Stable Diffusion model');
+          console.log('Falling back to regular Imagen model');
           const fallbackOutput = await replicate.run(
-            "stability-ai/stable-diffusion:db21e45d3f7023abc2a46ee38a23973f6dce16bb082a930b0c49861f96d1e5bf",
+            "google-deepmind/imagen-3",
             {
               input: {
-                prompt: `Professional jewelry photography: ${imagePrompt}. Clean white background, studio lighting`,
-                width: 512,
-                height: 512
+                prompt: `Professional jewelry photography: ${imagePrompt}. Clean white background, studio lighting, commercial product photography`,
+                aspect_ratio: "1:1",
+                output_format: "webp",
+                output_quality: 85
               }
             }
           );
           
-          imageUrl = fallbackOutput[0];
-          console.log('Image generated with fallback model');
+          imageUrl = fallbackOutput;
+          console.log('Image generated with fallback Imagen model');
           
         } catch (fallbackError) {
           console.error('Fallback image generation also failed:', fallbackError);
+          
+          // Final fallback to Stable Diffusion if Imagen fails
+          try {
+            console.log('Final fallback to Stable Diffusion');
+            const sdOutput = await replicate.run(
+              "stability-ai/stable-diffusion:27b93a2413e7f36cd83da926f3656280b2931564ff050bf9575f1fdf9bcd7478",
+              {
+                input: {
+                  prompt: `Professional jewelry photography: ${imagePrompt}. High quality, clean white background, studio lighting`,
+                  width: 768,
+                  height: 768,
+                  num_inference_steps: 25,
+                  guidance_scale: 7.5
+                }
+              }
+            );
+            
+            imageUrl = sdOutput[0];
+            console.log('Image generated with Stable Diffusion fallback');
+            
+          } catch (sdError) {
+            console.error('All image generation methods failed:', sdError);
+          }
         }
       }
     }
