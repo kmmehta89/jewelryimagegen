@@ -79,12 +79,12 @@ The image description should be detailed and suitable for professional jewelry p
       try {
         console.log('Generating image with prompt:', imagePrompt);
         
-        // Use Google's Imagen model via Replicate
+        // Use Google's Imagen 3 model via Replicate
         const output = await replicate.run(
-          "google-deepmind/imagen-3-fast",
+          "google/imagen-3",
           {
             input: {
-              prompt: `Professional jewelry photography: ${imagePrompt}. High quality, clean white background, studio lighting, detailed and realistic, commercial product photography style, 4K resolution`,
+              prompt: `Professional jewelry photography: ${imagePrompt}. High quality, clean white background, studio lighting, detailed and realistic, commercial product photography style`,
               negative_prompt: "blurry, low quality, distorted, ugly, bad anatomy, watermark, text, signature, hands, fingers, people",
               aspect_ratio: "1:1",
               output_format: "webp",
@@ -94,55 +94,34 @@ The image description should be detailed and suitable for professional jewelry p
           }
         );
         
-        imageUrl = output; // Imagen typically returns a single URL
-        console.log('Image generated successfully with Google Imagen');
+        imageUrl = output; // Imagen returns a single URL
+        console.log('Image generated successfully with Google Imagen 3');
         
       } catch (imageError) {
         console.error('Image generation error:', imageError);
         
-        // Fallback: Try the regular Imagen model if fast version fails
+        // Fallback to Stable Diffusion if Imagen fails
         try {
-          console.log('Falling back to Imagen 3 model');
+          console.log('Falling back to Stable Diffusion');
           const fallbackOutput = await replicate.run(
-            "google/imagen-3",
+            "stability-ai/stable-diffusion:27b93a2413e7f36cd83da926f3656280b2931564ff050bf9575f1fdf9bcd7478",
             {
               input: {
-                prompt: `Professional jewelry photography: ${imagePrompt}. Clean white background, studio lighting, commercial product photography`,
-                aspect_ratio: "1:1",
-                output_format: "webp",
-                output_quality: 85
+                prompt: `Professional jewelry photography: ${imagePrompt}. High quality, clean white background, studio lighting, detailed and realistic, commercial product photography`,
+                negative_prompt: "blurry, low quality, distorted, ugly, bad anatomy, watermark, text, signature, hands, fingers, people",
+                width: 768,
+                height: 768,
+                num_inference_steps: 25,
+                guidance_scale: 7.5
               }
             }
           );
           
-          imageUrl = fallbackOutput;
-          console.log('Image generated with fallback Imagen model');
+          imageUrl = fallbackOutput[0]; // Stable Diffusion returns an array
+          console.log('Image generated with Stable Diffusion fallback');
           
-        } catch (fallbackError) {
-          console.error('Fallback image generation also failed:', fallbackError);
-          
-          // Final fallback to Stable Diffusion if Imagen fails
-          try {
-            console.log('Final fallback to Stable Diffusion');
-            const sdOutput = await replicate.run(
-              "stability-ai/stable-diffusion:27b93a2413e7f36cd83da926f3656280b2931564ff050bf9575f1fdf9bcd7478",
-              {
-                input: {
-                  prompt: `Professional jewelry photography: ${imagePrompt}. High quality, clean white background, studio lighting`,
-                  width: 768,
-                  height: 768,
-                  num_inference_steps: 25,
-                  guidance_scale: 7.5
-                }
-              }
-            );
-            
-            imageUrl = sdOutput[0];
-            console.log('Image generated with Stable Diffusion fallback');
-            
-          } catch (sdError) {
-            console.error('All image generation methods failed:', sdError);
-          }
+        } catch (sdError) {
+          console.error('All image generation methods failed:', sdError);
         }
       }
     }
