@@ -87,9 +87,7 @@ The image description should be detailed and suitable for professional jewelry p
               prompt: `Professional jewelry photography: ${imagePrompt}. High quality, clean white background, studio lighting, detailed and realistic, commercial product photography style`,
               negative_prompt: "blurry, low quality, distorted, ugly, bad anatomy, watermark, text, signature, hands, fingers, people",
               aspect_ratio: "1:1",
-              output_format: "webp",
-              output_quality: 90,
-              safety_tolerance: 2
+              output_format: "png"
             }
           }
         );
