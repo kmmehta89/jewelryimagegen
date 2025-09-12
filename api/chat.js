@@ -102,9 +102,9 @@ The image description should be detailed and suitable for professional jewelry p
         
         // Fallback: Try the regular Imagen model if fast version fails
         try {
-          console.log('Falling back to regular Imagen model');
+          console.log('Falling back to Imagen 3 model');
           const fallbackOutput = await replicate.run(
-            "google-deepmind/imagen-3",
+            "google/imagen-3",
             {
               input: {
                 prompt: `Professional jewelry photography: ${imagePrompt}. Clean white background, studio lighting, commercial product photography`,
