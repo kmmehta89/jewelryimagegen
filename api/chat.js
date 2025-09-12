@@ -49,6 +49,7 @@ The image description should be detailed and suitable for professional jewelry p
     
     // Step 2: Check if image generation is requested OR if it's a jewelry request
     let imageUrl = null;
+    let downloadUrl = null;
     
     // Force image generation for jewelry-related requests
     const isJewelryRequest = (
@@ -93,6 +94,7 @@ The image description should be detailed and suitable for professional jewelry p
         );
         
         imageUrl = output; // Imagen returns a single URL
+        downloadUrl = imageUrl; // For now, download URL is the same as display URL
         console.log('Image generated successfully with Google Imagen 3');
         
       } catch (imageError) {
@@ -116,6 +118,7 @@ The image description should be detailed and suitable for professional jewelry p
           );
           
           imageUrl = fallbackOutput[0]; // Stable Diffusion returns an array
+          downloadUrl = imageUrl; // For now, download URL is the same as display URL
           console.log('Image generated with Stable Diffusion fallback');
           
         } catch (sdError) {
@@ -130,7 +133,13 @@ The image description should be detailed and suitable for professional jewelry p
     res.status(200).json({
       message: cleanMessage,
       imageUrl,
-      conversationId: Date.now()
+      downloadUrl, // Provide separate download URL if needed
+      conversationId: Date.now(),
+      metadata: imageUrl ? {
+        filename: `jewelry-design-${Date.now()}.png`,
+        type: 'image/png',
+        downloadable: true
+      } : null
     });
     
   } catch (error) {
