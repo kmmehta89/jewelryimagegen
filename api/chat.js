@@ -111,7 +111,7 @@ Keep the description concise but detailed enough for jewelry photography generat
           },
           {
             type: 'text',
-            content: 'Please analyze this jewelry image and provide a detailed description for jewelry photography purposes.'
+            text: 'Please analyze this jewelry image and provide a detailed description for jewelry photography purposes.'
           }
         ]
       }]
@@ -245,6 +245,20 @@ module.exports = async function handler(req, res) {
     });
 
     const { message, conversationHistory = [] } = req.body;
+    
+    // Parse conversationHistory if it's a string (from FormData)
+    let parsedHistory = [];
+    if (typeof conversationHistory === 'string') {
+      try {
+        parsedHistory = JSON.parse(conversationHistory);
+      } catch (e) {
+        console.log('Could not parse conversationHistory, using empty array');
+        parsedHistory = [];
+      }
+    } else if (Array.isArray(conversationHistory)) {
+      parsedHistory = conversationHistory;
+    }
+    
     let referenceImageData = null;
     let referenceImageAnalysis = '';
     
@@ -295,8 +309,8 @@ Only include the GENERATE_IMAGE instruction when you are discussing or recommend
 The image description should be detailed and suitable for professional jewelry photography, including details about the jewelry type, materials, style, setting, and any specific design elements mentioned by the customer.`;
 
     const claudeMessages = [
-      ...conversationHistory.filter(msg => msg.role !== 'system'),
-      { role: 'user', content: message }
+      ...parsedHistory.filter(msg => msg.role !== 'system'),
+      { role: 'user', content: message || 'Please create jewelry inspired by this reference image' }
     ];
 
     const claudeResponse = await anthropic.messages.create({
