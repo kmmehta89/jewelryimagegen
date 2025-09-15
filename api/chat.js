@@ -34,15 +34,12 @@ async function uploadImageToStorage(base64Data, filename) {
     const bucket = storage.bucket(bucketName);
     const file = bucket.file(filename);
     
-    // Upload the file
+    // Upload the file (will be automatically public if bucket allows public access)
     await file.save(buffer, {
       metadata: {
         contentType: 'image/png',
       }
     });
-    
-    // Make the file publicly readable
-    await file.makePublic();
     
     // Return public URL
     return `https://storage.googleapis.com/${bucketName}/${filename}`;
