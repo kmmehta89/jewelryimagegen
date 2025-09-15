@@ -1,14 +1,98 @@
-// api/chat.js - Vercel serverless function
+// api/chat.js - Vercel serverless function with direct Google Vertex AI
 const { Anthropic } = require('@anthropic-ai/sdk');
-const Replicate = require('replicate');
+const { GoogleAuth } = require('google-auth-library');
+const axios = require('axios');
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
 
-const replicate = new Replicate({
-  auth: process.env.REPLICATE_API_TOKEN,
+// Initialize Google Auth using service account key from environment variable
+const auth = new GoogleAuth({
+  credentials: JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY),
+  scopes: ['https://www.googleapis.com/auth/cloud-platform'],
 });
+
+async function generateImageWithVertex(prompt) {
+  try {
+    const authClient = await auth.getClient();
+    const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID;
+    const location = 'us-central1'; // or your preferred location
+    
+    const url = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/imagen-3.0-generate-001:predict`;
+    
+    const requestBody = {
+      instances: [{
+        prompt: `Professional jewelry photography: ${prompt}. High quality, clean white background, studio lighting, detailed and realistic, commercial product photography style`,
+        negative_prompt: "blurry, low quality, distorted, ugly, bad anatomy, watermark, text, signature, hands, fingers, people",
+        parameters: {
+          aspectRatio: "1:1",
+          outputMimeType: "image/png",
+          safetyFilterLevel: "block_some", // or "block_few", "block_most"
+          personGeneration: "dont_allow" // Since it's jewelry
+        }
+      }],
+      parameters: {
+        sampleCount: 1
+      }
+    };
+    
+    const accessToken = await authClient.getAccessToken();
+    
+    const response = await axios.post(url, requestBody, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 60000 // 60 second timeout for image generation
+    });
+    
+    if (response.data.predictions && response.data.predictions[0]) {
+      const prediction = response.data.predictions[0];
+      
+      // The response contains base64 encoded image data
+      if (prediction.bytesBase64Encoded) {
+        // Convert base64 to a data URL
+        return `data:image/png;base64,${prediction.bytesBase64Encoded}`;
+      }
+      
+      // Some responses might have a generated image URL
+      if (prediction.mimeType && prediction.bytesBase64Encoded) {
+        return `data:${prediction.mimeType};base64,${prediction.bytesBase64Encoded}`;
+      }
+    }
+    
+    throw new Error('No image generated in response');
+    
+  } catch (error) {
+    console.error('Vertex AI error:', error.response?.data || error.message);
+    throw error;
+  }
+}
+
+// Fallback to Replicate Stable Diffusion (keeping your existing fallback)
+async function fallbackToStableDiffusion(prompt) {
+  const Replicate = require('replicate');
+  const replicate = new Replicate({
+    auth: process.env.REPLICATE_API_TOKEN,
+  });
+  
+  const output = await replicate.run(
+    "stability-ai/stable-diffusion:27b93a2413e7f36cd83da926f3656280b2931564ff050bf9575f1fdf9bcd7478",
+    {
+      input: {
+        prompt: `Professional jewelry photography: ${prompt}. High quality, clean white background, studio lighting, detailed and realistic, commercial product photography`,
+        negative_prompt: "blurry, low quality, distorted, ugly, bad anatomy, watermark, text, signature, hands, fingers, people",
+        width: 768,
+        height: 768,
+        num_inference_steps: 25,
+        guidance_scale: 7.5
+      }
+    }
+  );
+  
+  return output[0];
+}
 
 module.exports = async function handler(req, res) {
   // Enable CORS for your HubSpot domain (update this later with your actual domain)
@@ -80,45 +164,19 @@ The image description should be detailed and suitable for professional jewelry p
       try {
         console.log('Generating image with prompt:', imagePrompt);
         
-        // Use Google's Imagen 3 model via Replicate
-        const output = await replicate.run(
-          "google/imagen-3",
-          {
-            input: {
-              prompt: `Professional jewelry photography: ${imagePrompt}. High quality, clean white background, studio lighting, detailed and realistic, commercial product photography style`,
-              negative_prompt: "blurry, low quality, distorted, ugly, bad anatomy, watermark, text, signature, hands, fingers, people",
-              aspect_ratio: "1:1",
-              output_format: "png"
-            }
-          }
-        );
-        
-        imageUrl = output; // Imagen returns a single URL
-        downloadUrl = imageUrl; // For now, download URL is the same as display URL
-        console.log('Image generated successfully with Google Imagen 3');
+        // Use Google's Vertex AI directly
+        imageUrl = await generateImageWithVertex(imagePrompt);
+        downloadUrl = imageUrl; // For data URLs, same as display URL
+        console.log('Image generated successfully with Google Vertex AI');
         
       } catch (imageError) {
-        console.error('Image generation error:', imageError);
+        console.error('Vertex AI image generation error:', imageError);
         
-        // Fallback to Stable Diffusion if Imagen fails
+        // Fallback to Stable Diffusion if Vertex AI fails
         try {
           console.log('Falling back to Stable Diffusion');
-          const fallbackOutput = await replicate.run(
-            "stability-ai/stable-diffusion:27b93a2413e7f36cd83da926f3656280b2931564ff050bf9575f1fdf9bcd7478",
-            {
-              input: {
-                prompt: `Professional jewelry photography: ${imagePrompt}. High quality, clean white background, studio lighting, detailed and realistic, commercial product photography`,
-                negative_prompt: "blurry, low quality, distorted, ugly, bad anatomy, watermark, text, signature, hands, fingers, people",
-                width: 768,
-                height: 768,
-                num_inference_steps: 25,
-                guidance_scale: 7.5
-              }
-            }
-          );
-          
-          imageUrl = fallbackOutput[0]; // Stable Diffusion returns an array
-          downloadUrl = imageUrl; // For now, download URL is the same as display URL
+          imageUrl = await fallbackToStableDiffusion(imagePrompt);
+          downloadUrl = imageUrl;
           console.log('Image generated with Stable Diffusion fallback');
           
         } catch (sdError) {
@@ -133,7 +191,7 @@ The image description should be detailed and suitable for professional jewelry p
     res.status(200).json({
       message: cleanMessage,
       imageUrl,
-      downloadUrl, // Provide separate download URL if needed
+      downloadUrl,
       conversationId: Date.now(),
       metadata: imageUrl ? {
         filename: `jewelry-design-${Date.now()}.png`,
@@ -150,9 +208,9 @@ The image description should be detailed and suitable for professional jewelry p
       details: {
         type: error.constructor.name,
         hasAnthropicKey: !!process.env.ANTHROPIC_API_KEY,
-        hasReplicateKey: !!process.env.REPLICATE_API_TOKEN,
-        anthropicKeyPrefix: process.env.ANTHROPIC_API_KEY?.substring(0, 10) + '...',
-        replicateKeyPrefix: process.env.REPLICATE_API_TOKEN?.substring(0, 10) + '...'
+        hasGoogleCredentials: !!process.env.GOOGLE_SERVICE_ACCOUNT_KEY,
+        hasGoogleProjectId: !!process.env.GOOGLE_CLOUD_PROJECT_ID,
+        anthropicKeyPrefix: process.env.ANTHROPIC_API_KEY?.substring(0, 10) + '...'
       }
     });
   }
