@@ -8,8 +8,12 @@ const anthropic = new Anthropic({
 });
 
 // Initialize Google Auth using service account key from environment variable
+// Fix private_key newlines to prevent OpenSSL decoder errors
+const keyJson = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY);
+keyJson.private_key = keyJson.private_key.replace(/\\n/g, "\n");
+
 const auth = new GoogleAuth({
-  credentials: JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY),
+  credentials: keyJson,
   scopes: ['https://www.googleapis.com/auth/cloud-platform'],
 });
 
@@ -18,9 +22,9 @@ async function generateImageWithVertex(prompt) {
     const authClient = await auth.getClient();
     const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID;
     const location = 'us-central1'; // or your preferred location
-    
+
     const url = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/imagen-3.0-generate-001:predict`;
-    
+
     const requestBody = {
       instances: [{
         prompt: `Professional jewelry photography: ${prompt}. High quality, clean white background, studio lighting, detailed and realistic, commercial product photography style`,
@@ -28,42 +32,37 @@ async function generateImageWithVertex(prompt) {
         parameters: {
           aspectRatio: "1:1",
           outputMimeType: "image/png",
-          safetyFilterLevel: "block_some", // or "block_few", "block_most"
-          personGeneration: "dont_allow" // Since it's jewelry
+          safetyFilterLevel: "block_some",
+          personGeneration: "dont_allow"
         }
       }],
-      parameters: {
-        sampleCount: 1
-      }
+      parameters: { sampleCount: 1 }
     };
-    
+
     const accessToken = await authClient.getAccessToken();
-    
+
     const response = await axios.post(url, requestBody, {
       headers: {
         'Authorization': `Bearer ${accessToken}`,
         'Content-Type': 'application/json'
       },
-      timeout: 60000 // 60 second timeout for image generation
+      timeout: 60000
     });
-    
+
     if (response.data.predictions && response.data.predictions[0]) {
       const prediction = response.data.predictions[0];
-      
-      // The response contains base64 encoded image data
+
       if (prediction.bytesBase64Encoded) {
-        // Convert base64 to a data URL
         return `data:image/png;base64,${prediction.bytesBase64Encoded}`;
       }
-      
-      // Some responses might have a generated image URL
+
       if (prediction.mimeType && prediction.bytesBase64Encoded) {
         return `data:${prediction.mimeType};base64,${prediction.bytesBase64Encoded}`;
       }
     }
-    
+
     throw new Error('No image generated in response');
-    
+
   } catch (error) {
     console.error('Vertex AI error:', error.response?.data || error.message);
     throw error;
