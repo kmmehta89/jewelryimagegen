@@ -39,7 +39,7 @@ async function generateImageWithVertex(prompt) {
       parameters: { sampleCount: 1 }
     };
 
-    const accessToken = await authClient.getAccessToken();
+    const { token: accessToken } = await authClient.getAccessToken();
 
     const response = await axios.post(url, requestBody, {
       headers: {
