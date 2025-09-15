@@ -1,14 +1,14 @@
-// api/chat.js - Vercel serverless function with direct Google Vertex AI
+// api/chat.js - Updated with image upload functionality
 const { Anthropic } = require('@anthropic-ai/sdk');
 const { GoogleAuth } = require('google-auth-library');
 const axios = require('axios');
+const { Storage } = require('@google-cloud/storage');
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
 
-// Initialize Google Auth using service account key from environment variable
-// Fix private_key newlines to prevent OpenSSL decoder errors
+// Initialize Google Auth
 const keyJson = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY);
 keyJson.private_key = keyJson.private_key.replace(/\\n/g, "\n");
 
@@ -17,11 +17,43 @@ const auth = new GoogleAuth({
   scopes: ['https://www.googleapis.com/auth/cloud-platform'],
 });
 
+// Initialize Google Cloud Storage
+const storage = new Storage({
+  credentials: keyJson,
+  projectId: process.env.GOOGLE_CLOUD_PROJECT_ID,
+});
+
+const bucketName = process.env.GOOGLE_STORAGE_BUCKET || 'jewelry-designs-bucket'; // You'll need to create this bucket
+
+async function uploadImageToStorage(base64Data, filename) {
+  try {
+    // Extract base64 data without the data:image/png;base64, prefix
+    const base64Image = base64Data.replace(/^data:image\/[a-z]+;base64,/, '');
+    const buffer = Buffer.from(base64Image, 'base64');
+    
+    const bucket = storage.bucket(bucketName);
+    const file = bucket.file(filename);
+    
+    await file.save(buffer, {
+      metadata: {
+        contentType: 'image/png',
+      },
+      public: true, // Make the file publicly accessible
+    });
+    
+    // Return public URL
+    return `https://storage.googleapis.com/${bucketName}/${filename}`;
+  } catch (error) {
+    console.error('Error uploading to Google Storage:', error);
+    throw error;
+  }
+}
+
 async function generateImageWithVertex(prompt) {
   try {
     const authClient = await auth.getClient();
     const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID;
-    const location = 'us-central1'; // or your preferred location
+    const location = 'us-central1';
 
     const url = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/imagen-3.0-generate-001:predict`;
 
@@ -53,11 +85,17 @@ async function generateImageWithVertex(prompt) {
       const prediction = response.data.predictions[0];
 
       if (prediction.bytesBase64Encoded) {
-        return `data:image/png;base64,${prediction.bytesBase64Encoded}`;
-      }
-
-      if (prediction.mimeType && prediction.bytesBase64Encoded) {
-        return `data:${prediction.mimeType};base64,${prediction.bytesBase64Encoded}`;
+        const base64Data = `data:image/png;base64,${prediction.bytesBase64Encoded}`;
+        
+        // Upload to Google Cloud Storage and get public URL
+        const filename = `jewelry-design-${Date.now()}.png`;
+        const publicUrl = await uploadImageToStorage(base64Data, filename);
+        
+        return {
+          dataUrl: base64Data, // For immediate display
+          publicUrl: publicUrl, // For sharing/email
+          filename: filename
+        };
       }
     }
 
@@ -69,7 +107,7 @@ async function generateImageWithVertex(prompt) {
   }
 }
 
-// Fallback to Replicate Stable Diffusion (keeping your existing fallback)
+// Fallback to Replicate (keeping existing logic)
 async function fallbackToStableDiffusion(prompt) {
   const Replicate = require('replicate');
   const replicate = new Replicate({
@@ -90,12 +128,16 @@ async function fallbackToStableDiffusion(prompt) {
     }
   );
   
-  return output[0];
+  // Replicate returns direct URLs, so we can use them as-is
+  return {
+    dataUrl: output[0],
+    publicUrl: output[0],
+    filename: `jewelry-design-${Date.now()}.png`
+  };
 }
 
 module.exports = async function handler(req, res) {
-  // Enable CORS for your HubSpot domain (update this later with your actual domain)
-  res.setHeader('Access-Control-Allow-Origin', '*'); // Change this to your HubSpot domain later
+  res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   
@@ -110,7 +152,7 @@ module.exports = async function handler(req, res) {
   try {
     const { message, conversationHistory = [] } = req.body;
     
-    // Step 1: Send to Claude for jewelry consultation
+    // Step 1: Claude consultation
     const claudeResponse = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 1000,
@@ -128,13 +170,10 @@ The image description should be detailed and suitable for professional jewelry p
     });
     
     const claudeMessage = claudeResponse.content[0].text;
-    console.log('Full Claude response:', claudeMessage);
     
-    // Step 2: Check if image generation is requested OR if it's a jewelry request
-    let imageUrl = null;
-    let downloadUrl = null;
+    // Step 2: Image generation
+    let imageResult = null;
     
-    // Force image generation for jewelry-related requests
     const isJewelryRequest = (
       message.toLowerCase().includes('ring') ||
       message.toLowerCase().includes('jewelry') ||
@@ -156,26 +195,20 @@ The image description should be detailed and suitable for professional jewelry p
       if (claudeMessage.includes('GENERATE_IMAGE:')) {
         imagePrompt = claudeMessage.split('GENERATE_IMAGE:')[1].trim();
       } else {
-        // Create image prompt based on the user's original message
         imagePrompt = `${message.replace(/generate|create|image|of|an?/gi, '').trim()}, professional jewelry photography style`;
       }
       
       try {
         console.log('Generating image with prompt:', imagePrompt);
-        
-        // Use Google's Vertex AI directly
-        imageUrl = await generateImageWithVertex(imagePrompt);
-        downloadUrl = imageUrl; // For data URLs, same as display URL
+        imageResult = await generateImageWithVertex(imagePrompt);
         console.log('Image generated successfully with Google Vertex AI');
         
       } catch (imageError) {
         console.error('Vertex AI image generation error:', imageError);
         
-        // Fallback to Stable Diffusion if Vertex AI fails
         try {
           console.log('Falling back to Stable Diffusion');
-          imageUrl = await fallbackToStableDiffusion(imagePrompt);
-          downloadUrl = imageUrl;
+          imageResult = await fallbackToStableDiffusion(imagePrompt);
           console.log('Image generated with Stable Diffusion fallback');
           
         } catch (sdError) {
@@ -184,18 +217,20 @@ The image description should be detailed and suitable for professional jewelry p
       }
     }
     
-    // Remove the GENERATE_IMAGE instruction from the response to user
+    // Clean response
     const cleanMessage = claudeMessage.replace(/GENERATE_IMAGE:.*$/m, '').trim();
     
     res.status(200).json({
       message: cleanMessage,
-      imageUrl,
-      downloadUrl,
+      imageUrl: imageResult?.dataUrl || null, // For immediate display
+      publicUrl: imageResult?.publicUrl || null, // For sharing/email
+      downloadUrl: imageResult?.dataUrl || null, // For download
       conversationId: Date.now(),
-      metadata: imageUrl ? {
-        filename: `jewelry-design-${Date.now()}.png`,
+      metadata: imageResult ? {
+        filename: imageResult.filename,
         type: 'image/png',
-        downloadable: true
+        downloadable: true,
+        publicUrl: imageResult.publicUrl // Include public URL in metadata
       } : null
     });
     
@@ -209,6 +244,7 @@ The image description should be detailed and suitable for professional jewelry p
         hasAnthropicKey: !!process.env.ANTHROPIC_API_KEY,
         hasGoogleCredentials: !!process.env.GOOGLE_SERVICE_ACCOUNT_KEY,
         hasGoogleProjectId: !!process.env.GOOGLE_CLOUD_PROJECT_ID,
+        hasStorageBucket: !!process.env.GOOGLE_STORAGE_BUCKET,
         anthropicKeyPrefix: process.env.ANTHROPIC_API_KEY?.substring(0, 10) + '...'
       }
     });
