@@ -319,27 +319,63 @@ async function uploadToCloudStorage(imageBuffer, filename) {
   });
 }
 
-// Enhanced Vertex AI image generation
+// Enhanced Vertex AI image generation with fixed authentication
 async function generateImageWithVertex(prompt, referenceAnalysis) {
   const enhancedPrompt = createEnhancedImagePrompt(prompt, referenceAnalysis);
   
   try {
-    const serviceAccountKey = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY);
+    // Parse and validate service account key
+    let serviceAccountKey;
+    try {
+      serviceAccountKey = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY);
+    } catch (parseError) {
+      console.error('Invalid GOOGLE_SERVICE_ACCOUNT_KEY JSON format:', parseError);
+      throw new Error('Invalid Google service account key format');
+    }
+    
     const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID;
     
+    if (!projectId) {
+      throw new Error('GOOGLE_CLOUD_PROJECT_ID not configured');
+    }
+
+    // Fix private key formatting issues that cause OpenSSL errors
+    if (serviceAccountKey.private_key) {
+      // Replace escaped newlines with actual newlines
+      let privateKey = serviceAccountKey.private_key.replace(/\\n/g, '\n');
+      
+      // Remove any extra whitespace or newlines that might cause issues
+      privateKey = privateKey.trim();
+      
+      // Ensure proper PEM format
+      if (!privateKey.startsWith('-----BEGIN PRIVATE KEY-----')) {
+        throw new Error('Invalid private key format - missing header');
+      }
+      if (!privateKey.endsWith('-----END PRIVATE KEY-----')) {
+        throw new Error('Invalid private key format - missing footer');
+      }
+      
+      // Update the key in the service account object
+      serviceAccountKey.private_key = privateKey;
+    }
+    
+    // Initialize Vertex AI with proper authentication
     const vertex_ai = new VertexAI({
       project: projectId,
       location: 'us-central1',
       googleAuthOptions: {
         credentials: serviceAccountKey,
+        scopes: ['https://www.googleapis.com/auth/cloud-platform']
       },
     });
 
+    // Use the correct model for image generation
     const model = 'imagegeneration@006';
     const generativeModel = vertex_ai.preview.getGenerativeModel({
       model: model,
     });
 
+    // Create the request with enhanced prompt
     const request = {
       contents: [
         {
@@ -359,6 +395,7 @@ async function generateImageWithVertex(prompt, referenceAnalysis) {
       },
     };
 
+    console.log('Attempting Vertex AI generation with enhanced prompt...');
     const streamingResp = await generativeModel.generateContentStream(request);
     const contentResponse = await streamingResp.response;
     
@@ -399,6 +436,10 @@ async function generateImageWithVertex(prompt, referenceAnalysis) {
     
   } catch (error) {
     console.error('Vertex AI generation error:', error);
+    // Re-throw with more context
+    if (error.message.includes('authentication') || error.message.includes('DECODER')) {
+      throw new Error(`Authentication failed: Check your GOOGLE_SERVICE_ACCOUNT_KEY format. Original error: ${error.message}`);
+    }
     throw error;
   }
 }
