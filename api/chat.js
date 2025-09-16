@@ -1,4 +1,4 @@
-// api/chat.js - Updated with reference image functionality
+// api/chat.js - Enhanced with multi-angle image generation and video support
 const { Anthropic } = require('@anthropic-ai/sdk');
 const { GoogleAuth } = require('google-auth-library');
 const axios = require('axios');
@@ -41,6 +41,40 @@ const upload = multer({
     }
   }
 });
+
+// GJS Logo watermark function
+async function addWatermark(imageBuffer) {
+  try {
+    // You'll need to download and store the GJS logo
+    // For now, we'll create a simple text watermark
+    const watermarkedBuffer = await sharp(imageBuffer)
+      .composite([{
+        input: {
+          text: {
+            text: 'GJS',
+            fontfile: 'Arial', // You can specify a font file path
+            fontSize: 24,
+            rgba: true,
+          },
+          create: {
+            width: 80,
+            height: 30,
+            channels: 4,
+            background: { r: 255, g: 255, b: 255, alpha: 0.8 }
+          }
+        },
+        top: 20,
+        left: 20,
+        blend: 'over'
+      }])
+      .toBuffer();
+    
+    return watermarkedBuffer;
+  } catch (error) {
+    console.error('Error adding watermark:', error);
+    return imageBuffer; // Return original if watermarking fails
+  }
+}
 
 async function uploadImageToStorage(buffer, filename, contentType = 'image/png') {
   try {
@@ -124,7 +158,8 @@ Keep the description concise but detailed enough for jewelry photography generat
   }
 }
 
-async function generateImageWithVertex(prompt, referenceImageAnalysis = '') {
+// Enhanced multi-angle image generation
+async function generateMultiAngleImages(prompt, referenceImageAnalysis = '') {
   try {
     const authClient = await auth.getClient();
     const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID;
@@ -132,20 +167,124 @@ async function generateImageWithVertex(prompt, referenceImageAnalysis = '') {
 
     const url = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/imagen-3.0-generate-001:predict`;
 
-    // Combine the original prompt with reference image analysis
+    // Define different angles and their specific prompts
+    const angles = [
+      {
+        name: 'front',
+        description: 'straight front view, centered, face-on perspective'
+      },
+      {
+        name: 'three-quarter',
+        description: '3/4 angle view, showing dimension and depth, slightly turned'
+      },
+      {
+        name: 'side',
+        description: 'perfect side profile view, showcasing thickness and profile'
+      },
+      {
+        name: 'top',
+        description: 'top-down bird\'s eye view, showing surface details and shape'
+      }
+    ];
+
+    const basePrompt = referenceImageAnalysis 
+      ? `Professional ecommerce jewelry photography inspired by: ${referenceImageAnalysis}. ${prompt}`
+      : `Professional ecommerce jewelry photography: ${prompt}`;
+
+    const images = [];
+
+    // Generate images for each angle
+    for (const angle of angles) {
+      const enhancedPrompt = `${basePrompt}, ${angle.description}, pure white background, studio lighting, high-end commercial product photography, metallic finish with reflective highlights, professional jewelry photography, clean and minimalist, high resolution, detailed craftsmanship, luxury presentation, no shadows on background`;
+
+      const requestBody = {
+        instances: [{
+          prompt: enhancedPrompt,
+          negative_prompt: "blurry, low quality, distorted, ugly, bad anatomy, watermark, text, signature, hands, fingers, people, colored background, shadows on background, cluttered, busy background, poor lighting, amateur photography",
+          parameters: {
+            aspectRatio: "1:1",
+            outputMimeType: "image/png",
+            safetyFilterLevel: "block_some",
+            personGeneration: "dont_allow"
+          }
+        }],
+        parameters: { sampleCount: 1 }
+      };
+
+      try {
+        const { token: accessToken } = await authClient.getAccessToken();
+
+        const response = await axios.post(url, requestBody, {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          },
+          timeout: 90000 // Increased timeout for multiple images
+        });
+
+        if (response.data.predictions && response.data.predictions[0]) {
+          const prediction = response.data.predictions[0];
+
+          if (prediction.bytesBase64Encoded) {
+            let imageBuffer = Buffer.from(prediction.bytesBase64Encoded, 'base64');
+            
+            // Add GJS watermark
+            imageBuffer = await addWatermark(imageBuffer);
+            
+            const filename = `jewelry-design-${angle.name}-${Date.now()}.png`;
+            const publicUrl = await uploadImageToStorage(imageBuffer, filename, 'image/png');
+            const base64Data = `data:image/png;base64,${imageBuffer.toString('base64')}`;
+            
+            images.push({
+              angle: angle.name,
+              dataUrl: base64Data,
+              publicUrl: publicUrl,
+              filename: filename
+            });
+          }
+        }
+      } catch (angleError) {
+        console.error(`Error generating ${angle.name} view:`, angleError);
+        // Continue with other angles even if one fails
+      }
+    }
+
+    if (images.length === 0) {
+      throw new Error('No images generated successfully');
+    }
+
+    return images;
+
+  } catch (error) {
+    console.error('Multi-angle image generation error:', error);
+    throw error;
+  }
+}
+
+// Video generation with Veo
+async function generateVideoWithVeo(prompt, referenceImageAnalysis = '') {
+  try {
+    const authClient = await auth.getClient();
+    const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID;
+    const location = 'us-central1';
+
+    // Veo model endpoint
+    const url = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/veo:predict`;
+
     const enhancedPrompt = referenceImageAnalysis 
-      ? `Professional jewelry photography inspired by this reference: ${referenceImageAnalysis}. ${prompt}. High quality, clean white background, studio lighting, detailed and realistic, commercial product photography style`
-      : `Professional jewelry photography: ${prompt}. High quality, clean white background, studio lighting, detailed and realistic, commercial product photography style`;
+      ? `Professional jewelry video showcasing: ${referenceImageAnalysis}. ${prompt}. Smooth 360-degree rotation, white background, studio lighting, metallic reflections, luxury presentation, high-end commercial jewelry video, detailed close-ups`
+      : `Professional jewelry video: ${prompt}. Smooth 360-degree rotation, white background, studio lighting, metallic reflections, luxury presentation, high-end commercial jewelry video, detailed close-ups`;
 
     const requestBody = {
       instances: [{
         prompt: enhancedPrompt,
-        negative_prompt: "blurry, low quality, distorted, ugly, bad anatomy, watermark, text, signature, hands, fingers, people",
+        negative_prompt: "shaky camera, poor quality, blurry, hands, fingers, people, colored background, amateur video",
         parameters: {
-          aspectRatio: "1:1",
-          outputMimeType: "image/png",
-          safetyFilterLevel: "block_some",
-          personGeneration: "dont_allow"
+          duration: "5s", // 5-second video
+          aspectRatio: "16:9",
+          outputMimeType: "video/mp4",
+          motionBucket: 3, // Controls motion intensity
+          safetyFilterLevel: "block_some"
         }
       }],
       parameters: { sampleCount: 1 }
@@ -158,37 +297,36 @@ async function generateImageWithVertex(prompt, referenceImageAnalysis = '') {
         'Authorization': `Bearer ${accessToken}`,
         'Content-Type': 'application/json'
       },
-      timeout: 60000
+      timeout: 180000 // 3 minutes timeout for video generation
     });
 
     if (response.data.predictions && response.data.predictions[0]) {
       const prediction = response.data.predictions[0];
 
       if (prediction.bytesBase64Encoded) {
-        const base64Data = `data:image/png;base64,${prediction.bytesBase64Encoded}`;
-        const buffer = Buffer.from(prediction.bytesBase64Encoded, 'base64');
-        
-        // Upload to Google Cloud Storage and get public URL
-        const filename = `jewelry-design-${Date.now()}.png`;
-        const publicUrl = await uploadImageToStorage(buffer, filename, 'image/png');
+        const videoBuffer = Buffer.from(prediction.bytesBase64Encoded, 'base64');
+        const filename = `jewelry-video-${Date.now()}.mp4`;
+        const publicUrl = await uploadImageToStorage(videoBuffer, filename, 'video/mp4');
+        const base64Data = `data:video/mp4;base64,${prediction.bytesBase64Encoded}`;
         
         return {
           dataUrl: base64Data,
           publicUrl: publicUrl,
-          filename: filename
+          filename: filename,
+          type: 'video'
         };
       }
     }
 
-    throw new Error('No image generated in response');
+    throw new Error('No video generated in response');
 
   } catch (error) {
-    console.error('Vertex AI error:', error.response?.data || error.message);
+    console.error('Veo video generation error:', error);
     throw error;
   }
 }
 
-// Fallback to Replicate with reference image support
+// Fallback to Replicate for images
 async function fallbackToStableDiffusion(prompt, referenceImageAnalysis = '') {
   const Replicate = require('replicate');
   const replicate = new Replicate({
@@ -196,15 +334,15 @@ async function fallbackToStableDiffusion(prompt, referenceImageAnalysis = '') {
   });
   
   const enhancedPrompt = referenceImageAnalysis 
-    ? `Professional jewelry photography inspired by: ${referenceImageAnalysis}. ${prompt}. High quality, clean white background, studio lighting, detailed and realistic, commercial product photography`
-    : `Professional jewelry photography: ${prompt}. High quality, clean white background, studio lighting, detailed and realistic, commercial product photography`;
+    ? `Professional ecommerce jewelry photography inspired by: ${referenceImageAnalysis}. ${prompt}. Pure white background, studio lighting, metallic finish, high-end commercial product photography`
+    : `Professional ecommerce jewelry photography: ${prompt}. Pure white background, studio lighting, metallic finish, high-end commercial product photography`;
   
   const output = await replicate.run(
     "stability-ai/stable-diffusion:27b93a2413e7f36cd83da926f3656280b2931564ff050bf9575f1fdf9bcd7478",
     {
       input: {
         prompt: enhancedPrompt,
-        negative_prompt: "blurry, low quality, distorted, ugly, bad anatomy, watermark, text, signature, hands, fingers, people",
+        negative_prompt: "blurry, low quality, distorted, ugly, bad anatomy, watermark, text, signature, hands, fingers, people, colored background",
         width: 768,
         height: 768,
         num_inference_steps: 25,
@@ -213,11 +351,12 @@ async function fallbackToStableDiffusion(prompt, referenceImageAnalysis = '') {
     }
   );
   
-  return {
+  return [{
+    angle: 'single',
     dataUrl: output[0],
     publicUrl: output[0],
     filename: `jewelry-design-${Date.now()}.png`
-  };
+  }];
 }
 
 module.exports = async function handler(req, res) {
@@ -267,7 +406,6 @@ module.exports = async function handler(req, res) {
       console.log('Processing reference image:', req.file.originalname);
       
       try {
-        // Process and upload reference image
         const processedImage = await processReferenceImage(req.file.buffer);
         const referenceFilename = `reference-${Date.now()}.jpg`;
         const referencePublicUrl = await uploadImageToStorage(
@@ -276,7 +414,6 @@ module.exports = async function handler(req, res) {
           'image/jpeg'
         );
         
-        // Analyze reference image with Claude
         referenceImageAnalysis = await analyzeImageWithClaude(processedImage.base64);
         console.log('Reference image analysis:', referenceImageAnalysis);
         
@@ -294,8 +431,14 @@ module.exports = async function handler(req, res) {
       }
     }
 
-    // Step 1: Claude consultation with reference context
-    const systemPrompt = `You are a jewelry designer assistant. Keep responses brief and focused (2-3 sentences max). A retailer is asking you to create an image of a piece of jewelry based on a request from a consumer. 
+    // Check if user wants video
+    const wantsVideo = message.toLowerCase().includes('video') || 
+                      message.toLowerCase().includes('animation') || 
+                      message.toLowerCase().includes('rotate') ||
+                      message.toLowerCase().includes('360');
+
+    // Step 1: Claude consultation with enhanced prompting
+    const systemPrompt = `You are a jewelry designer assistant. Keep responses brief and focused (2-3 sentences max). A retailer is asking you to create ${wantsVideo ? 'a video' : 'images'} of jewelry based on a consumer request.
 
 ${referenceImageData ? `The user provided a reference image showing: ${referenceImageAnalysis}
 
@@ -304,15 +447,15 @@ Create a design inspired by this reference.` : ''}
 IMPORTANT FORMATTING:
 - Keep responses concise and professional
 - Use **bold** for emphasis on key details
-- Always end with: GENERATE_IMAGE: [detailed technical description for AI image generation]
+- Always end with: ${wantsVideo ? 'GENERATE_VIDEO:' : 'GENERATE_IMAGES:'} [detailed technical description for AI generation]
 
-For non-jewelry questions, simply say "I can only create jewelry images. What piece would you like me to design?"
+For non-jewelry questions, simply say "I can only create jewelry ${wantsVideo ? 'videos' : 'images'}. What piece would you like me to design?"
 
-The GENERATE_IMAGE description should be detailed and technical for photography: jewelry type, materials, style, setting, stones, finish, lighting setup.`;
+The description should be detailed and technical for ${wantsVideo ? 'video' : 'photography'}: jewelry type, materials, style, setting, stones, finish, lighting setup.`;
 
     const claudeMessages = [
       ...parsedHistory.filter(msg => msg.role !== 'system'),
-      { role: 'user', content: message || 'Please create jewelry inspired by this reference image' }
+      { role: 'user', content: message || `Please create jewelry ${wantsVideo ? 'video' : 'images'} inspired by this reference` }
     ];
 
     const claudeResponse = await anthropic.messages.create({
@@ -324,8 +467,8 @@ The GENERATE_IMAGE description should be detailed and technical for photography:
     
     const claudeMessage = claudeResponse.content[0].text;
     
-    // Step 2: Image generation with reference context
-    let imageResult = null;
+    // Step 2: Generate content based on request type
+    let contentResult = null;
     
     const isJewelryRequest = (
       message.toLowerCase().includes('ring') ||
@@ -340,58 +483,100 @@ The GENERATE_IMAGE description should be detailed and technical for photography:
       message.toLowerCase().includes('generate') ||
       message.toLowerCase().includes('create') ||
       message.toLowerCase().includes('image') ||
-      claudeMessage.includes('GENERATE_IMAGE:') ||
-      referenceImageData // Always generate if reference image provided
+      message.toLowerCase().includes('video') ||
+      claudeMessage.includes('GENERATE_IMAGES:') ||
+      claudeMessage.includes('GENERATE_VIDEO:') ||
+      referenceImageData
     );
     
     if (isJewelryRequest) {
-      let imagePrompt;
+      let contentPrompt;
       
-      if (claudeMessage.includes('GENERATE_IMAGE:')) {
-        imagePrompt = claudeMessage.split('GENERATE_IMAGE:')[1].trim();
+      if (wantsVideo && claudeMessage.includes('GENERATE_VIDEO:')) {
+        contentPrompt = claudeMessage.split('GENERATE_VIDEO:')[1].trim();
+      } else if (claudeMessage.includes('GENERATE_IMAGES:')) {
+        contentPrompt = claudeMessage.split('GENERATE_IMAGES:')[1].trim();
       } else {
-        imagePrompt = `${message.replace(/generate|create|image|of|an?/gi, '').trim()}, professional jewelry photography style`;
+        contentPrompt = `${message.replace(/generate|create|image|video|of|an?/gi, '').trim()}, professional jewelry photography style`;
       }
       
       try {
-        console.log('Generating image with prompt:', imagePrompt);
-        console.log('Reference analysis:', referenceImageAnalysis || 'None');
+        if (wantsVideo) {
+          console.log('Generating video with prompt:', contentPrompt);
+          contentResult = await generateVideoWithVeo(contentPrompt, referenceImageAnalysis);
+          console.log('Video generated successfully with Google Veo');
+        } else {
+          console.log('Generating multi-angle images with prompt:', contentPrompt);
+          const images = await generateMultiAngleImages(contentPrompt, referenceImageAnalysis);
+          contentResult = { images, type: 'images' };
+          console.log(`Generated ${images.length} images successfully with Google Vertex AI`);
+        }
         
-        imageResult = await generateImageWithVertex(imagePrompt, referenceImageAnalysis);
-        console.log('Image generated successfully with Google Vertex AI');
+      } catch (generationError) {
+        console.error('Primary generation error:', generationError);
         
-      } catch (imageError) {
-        console.error('Vertex AI image generation error:', imageError);
-        
-        try {
-          console.log('Falling back to Stable Diffusion');
-          imageResult = await fallbackToStableDiffusion(imagePrompt, referenceImageAnalysis);
-          console.log('Image generated with Stable Diffusion fallback');
-          
-        } catch (sdError) {
-          console.error('All image generation methods failed:', sdError);
+        if (!wantsVideo) {
+          // Fallback only available for images
+          try {
+            console.log('Falling back to Stable Diffusion');
+            const images = await fallbackToStableDiffusion(contentPrompt, referenceImageAnalysis);
+            contentResult = { images, type: 'images' };
+            console.log('Images generated with Stable Diffusion fallback');
+            
+          } catch (sdError) {
+            console.error('All image generation methods failed:', sdError);
+          }
+        } else {
+          console.error('Video generation failed and no fallback available');
         }
       }
     }
     
     // Clean response
-    const cleanMessage = claudeMessage.replace(/GENERATE_IMAGE:.*$/m, '').trim();
+    const cleanMessage = claudeMessage.replace(/(GENERATE_IMAGES:|GENERATE_VIDEO:).*$/m, '').trim();
     
-    res.status(200).json({
+    // Prepare response based on content type
+    let responseData = {
       message: cleanMessage,
-      imageUrl: imageResult?.dataUrl || null,
-      publicUrl: imageResult?.publicUrl || null,
-      downloadUrl: imageResult?.dataUrl || null,
       conversationId: Date.now(),
-      referenceImage: referenceImageData, // Include reference image data
-      metadata: imageResult ? {
-        filename: imageResult.filename,
-        type: 'image/png',
-        downloadable: true,
-        publicUrl: imageResult.publicUrl,
-        referenceImage: referenceImageData // Also include in metadata
-      } : null
-    });
+      referenceImage: referenceImageData,
+    };
+
+    if (contentResult?.type === 'video') {
+      responseData = {
+        ...responseData,
+        videoUrl: contentResult.dataUrl,
+        publicUrl: contentResult.publicUrl,
+        downloadUrl: contentResult.dataUrl,
+        metadata: {
+          filename: contentResult.filename,
+          type: 'video/mp4',
+          downloadable: true,
+          publicUrl: contentResult.publicUrl,
+          referenceImage: referenceImageData
+        }
+      };
+    } else if (contentResult?.images) {
+      // For multiple images, return the first as primary with all as metadata
+      const primaryImage = contentResult.images[0];
+      responseData = {
+        ...responseData,
+        imageUrl: primaryImage?.dataUrl || null,
+        publicUrl: primaryImage?.publicUrl || null,
+        downloadUrl: primaryImage?.dataUrl || null,
+        images: contentResult.images, // All angles
+        metadata: primaryImage ? {
+          filename: primaryImage.filename,
+          type: 'image/png',
+          downloadable: true,
+          publicUrl: primaryImage.publicUrl,
+          referenceImage: referenceImageData,
+          allImages: contentResult.images
+        } : null
+      };
+    }
+    
+    res.status(200).json(responseData);
     
   } catch (error) {
     console.error('API Error:', error);
