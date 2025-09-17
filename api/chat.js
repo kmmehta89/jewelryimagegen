@@ -471,7 +471,8 @@ async function fallbackToStableDiffusion(prompt, referenceAnalysis) {
 
     if (output && output[0]) {
       const response = await fetch(output[0]);
-      const buffer = await response.buffer();
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
       
       const optimizedBuffer = await sharp(buffer)
         .png({ quality: 95 })
