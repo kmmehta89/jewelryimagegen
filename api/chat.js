@@ -132,15 +132,15 @@ async function generateImageWithVertex(prompt, referenceImageAnalysis = '') {
 
     const url = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/imagen-3.0-generate-001:predict`;
 
-    // Refined catalog-style prompt - concise but specific
+    // Enhanced catalog-style prompt with mandatory positioning
     const catalogPrompt = referenceImageAnalysis 
-      ? `${prompt}, inspired by: ${referenceImageAnalysis}. Catalog photography, white background, 3/4 angle, studio lighting, sparkling gems`
-      : `${prompt}. Catalog photography, white background, 3/4 angle, studio lighting, sparkling gems`;
+      ? `jewelry product photography: ${prompt}, inspired by: ${referenceImageAnalysis}. MUST BE: pure white background, three-quarter view angle, professional studio lighting, sparkling reflections`
+      : `jewelry product photography: ${prompt}. MUST BE: pure white background, three-quarter view angle, professional studio lighting, sparkling reflections`;
 
     const requestBody = {
       instances: [{
         prompt: catalogPrompt,
-        negative_prompt: "blurry, low quality, hands, people, multiple items, text, watermark",
+        negative_prompt: "colored background, dark background, gray background, black background, textured background, pattern background, front view, side view, back view, top view, multiple angles, blurry, low quality, hands, people, multiple items, text, watermark, shadows on background",
         parameters: {
           aspectRatio: "1:1",
           outputMimeType: "image/png",
@@ -188,28 +188,28 @@ async function generateImageWithVertex(prompt, referenceImageAnalysis = '') {
   }
 }
 
-// Updated fallback with same catalog style
+// Enhanced fallback with mandatory positioning
 async function fallbackToStableDiffusion(prompt, referenceImageAnalysis = '') {
   const Replicate = require('replicate');
   const replicate = new Replicate({
     auth: process.env.REPLICATE_API_TOKEN,
   });
   
-  // Shorter, focused catalog prompt for fallback
+  // Enhanced catalog prompt with mandatory requirements
   const catalogPrompt = referenceImageAnalysis 
-    ? `${prompt}, inspired by: ${referenceImageAnalysis}. Product catalog, white background, 3/4 view, professional lighting, sparkling`
-    : `${prompt}. Product catalog, white background, 3/4 view, professional lighting, sparkling`;
+    ? `jewelry product photography: ${prompt}, inspired by: ${referenceImageAnalysis}. MUST BE: pure white background, three-quarter view angle, professional studio lighting, sparkling`
+    : `jewelry product photography: ${prompt}. MUST BE: pure white background, three-quarter view angle, professional studio lighting, sparkling`;
   
   const output = await replicate.run(
     "stability-ai/stable-diffusion:27b93a2413e7f36cd83da926f3656280b2931564ff050bf9575f1fdf9bcd7478",
     {
       input: {
         prompt: catalogPrompt,
-        negative_prompt: "blurry, low quality, hands, people, multiple items, text, dark background",
+        negative_prompt: "colored background, dark background, gray background, black background, textured background, front view, side view, back view, top view, multiple angles, blurry, low quality, hands, people, multiple items, text, shadows on background",
         width: 768,
         height: 768,
         num_inference_steps: 20, // Reduced from 25 to save quota
-        guidance_scale: 7.0 // Slightly reduced
+        guidance_scale: 7.5 // Increased slightly for better adherence to prompt
       }
     }
   );
