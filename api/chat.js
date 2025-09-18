@@ -1,6 +1,7 @@
 // api/chat.js - Updated with refined catalog-style image generation
 const { Anthropic } = require('@anthropic-ai/sdk');
 const { GoogleAuth } = require('google-auth-library');
+const { VertexAI } = require('@google-cloud/vertexai');
 const axios = require('axios');
 const { Storage } = require('@google-cloud/storage');
 const multer = require('multer');
@@ -23,6 +24,15 @@ const auth = new GoogleAuth({
 const storage = new Storage({
   credentials: keyJson,
   projectId: process.env.GOOGLE_CLOUD_PROJECT_ID,
+});
+
+// Initialize Vertex AI
+const vertexAI = new VertexAI({
+  project: process.env.GOOGLE_CLOUD_PROJECT_ID,
+  location: 'us-central1',
+  googleAuthOptions: {
+    credentials: keyJson,
+  }
 });
 
 const bucketName = process.env.GOOGLE_STORAGE_BUCKET || 'jewelry-designs-bucket';
@@ -221,6 +231,66 @@ async function fallbackToStableDiffusion(prompt, referenceImageAnalysis = '') {
   };
 }
 
+async function generateVideoWithVertex(prompt, referenceImageAnalysis = '') {
+  try {
+    const model = vertexAI.getGenerativeModel({
+      model: 'imagen-3.0-generate-video-001',
+    });
+
+    // Enhanced video prompt for jewelry showcase
+    const videoPrompt = referenceImageAnalysis 
+      ? `jewelry product video: ${prompt}, inspired by: ${referenceImageAnalysis}. MUST BE: pure white background, rotating three-quarter view showcase, professional studio lighting, sparkling reflections, smooth rotation, 360-degree turn, luxury presentation`
+      : `jewelry product video: ${prompt}. MUST BE: pure white background, rotating three-quarter view showcase, professional studio lighting, sparkling reflections, smooth rotation, 360-degree turn, luxury presentation`;
+
+    const request = {
+      contents: [{
+        role: 'user',
+        parts: [{
+          text: videoPrompt
+        }]
+      }],
+      generationConfig: {
+        maxOutputTokens: 1024,
+        temperature: 0.2,
+      },
+      safetySettings: [
+        {
+          category: 'HARM_CATEGORY_DANGEROUS_CONTENT',
+          threshold: 'BLOCK_MEDIUM_AND_ABOVE'
+        }
+      ]
+    };
+
+    const response = await model.generateContent(request);
+    
+    if (response.response && response.response.candidates && response.response.candidates[0]) {
+      const candidate = response.response.candidates[0];
+      
+      if (candidate.content && candidate.content.parts && candidate.content.parts[0]) {
+        const videoPart = candidate.content.parts[0];
+        
+        if (videoPart.inlineData && videoPart.inlineData.data) {
+          const videoBuffer = Buffer.from(videoPart.inlineData.data, 'base64');
+          const filename = `jewelry-video-${Date.now()}.mp4`;
+          const publicUrl = await uploadImageToStorage(videoBuffer, filename, 'video/mp4');
+          
+          return {
+            dataUrl: `data:video/mp4;base64,${videoPart.inlineData.data}`,
+            publicUrl: publicUrl,
+            filename: filename,
+            type: 'video'
+          };
+        }
+      }
+    }
+
+    throw new Error('No video generated in response');
+
+  } catch (error) {
+    console.error('Vertex AI video generation error:', error);
+    throw error;
+  }
+
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -309,7 +379,9 @@ IMPORTANT FORMATTING:
 
 For non-jewelry questions, simply say "I can only create jewelry images. What piece would you like me to design?"
 
-The GENERATE_IMAGE description should be brief: just the jewelry type, main materials, and key visual features (e.g., "diamond solitaire engagement ring, platinum band, round brilliant cut").`;
+The GENERATE_IMAGE description should be brief: just the jewelry type, main materials, and key visual features (e.g., "diamond solitaire engagement ring, platinum band, round brilliant cut").
+
+For video requests, end with: GENERATE_VIDEO: [same brief description for rotating jewelry showcase]`;
 
     const claudeMessages = [
       ...parsedHistory.filter(msg => msg.role !== 'system'),
@@ -325,8 +397,21 @@ The GENERATE_IMAGE description should be brief: just the jewelry type, main mate
     
     const claudeMessage = claudeResponse.content[0].text;
     
-    // Step 2: Image generation with reference context
+    // Step 2: Image/Video generation with reference context
     let imageResult = null;
+    let videoResult = null;
+    
+    const isVideoRequest = (
+      message.toLowerCase().includes('video') ||
+      message.toLowerCase().includes('rotating') ||
+      message.toLowerCase().includes('360') ||
+      message.toLowerCase().includes('rotate') ||
+      message.toLowerCase().includes('spin') ||
+      message.toLowerCase().includes('animation') ||
+      message.toLowerCase().includes('moving') ||
+      claudeMessage.toLowerCase().includes('video') ||
+      claudeMessage.includes('GENERATE_VIDEO:')
+    );
     
     const isJewelryRequest = (
       message.toLowerCase().includes('ring') ||
@@ -346,31 +431,49 @@ The GENERATE_IMAGE description should be brief: just the jewelry type, main mate
     );
     
     if (isJewelryRequest) {
-      let imagePrompt;
+      let prompt;
       
       if (claudeMessage.includes('GENERATE_IMAGE:')) {
-        imagePrompt = claudeMessage.split('GENERATE_IMAGE:')[1].trim();
+        prompt = claudeMessage.split('GENERATE_IMAGE:')[1].trim();
+      } else if (claudeMessage.includes('GENERATE_VIDEO:')) {
+        prompt = claudeMessage.split('GENERATE_VIDEO:')[1].trim();
       } else {
-        imagePrompt = `${message.replace(/generate|create|image|of|an?/gi, '').trim()}, professional jewelry photography style`;
+        prompt = `${message.replace(/generate|create|image|video|of|an?/gi, '').trim()}, professional jewelry photography style`;
       }
       
-      try {
-        console.log('Generating image with prompt:', imagePrompt);
-        console.log('Reference analysis:', referenceImageAnalysis || 'None');
-        
-        imageResult = await generateImageWithVertex(imagePrompt, referenceImageAnalysis);
-        console.log('Image generated successfully with Google Vertex AI');
-        
-      } catch (imageError) {
-        console.error('Vertex AI image generation error:', imageError);
-        
+      if (isVideoRequest) {
+        // Generate video
         try {
-          console.log('Falling back to Stable Diffusion');
-          imageResult = await fallbackToStableDiffusion(imagePrompt, referenceImageAnalysis);
-          console.log('Image generated with Stable Diffusion fallback');
+          console.log('Generating video with prompt:', prompt);
+          console.log('Reference analysis:', referenceImageAnalysis || 'None');
           
-        } catch (sdError) {
-          console.error('All image generation methods failed:', sdError);
+          videoResult = await generateVideoWithVertex(prompt, referenceImageAnalysis);
+          console.log('Video generated successfully with Google Vertex AI');
+          
+        } catch (videoError) {
+          console.error('Vertex AI video generation error:', videoError);
+          // No fallback for video - just log the error
+        }
+      } else {
+        // Generate image (existing logic)
+        try {
+          console.log('Generating image with prompt:', prompt);
+          console.log('Reference analysis:', referenceImageAnalysis || 'None');
+          
+          imageResult = await generateImageWithVertex(prompt, referenceImageAnalysis);
+          console.log('Image generated successfully with Google Vertex AI');
+          
+        } catch (imageError) {
+          console.error('Vertex AI image generation error:', imageError);
+          
+          try {
+            console.log('Falling back to Stable Diffusion');
+            imageResult = await fallbackToStableDiffusion(prompt, referenceImageAnalysis);
+            console.log('Image generated with Stable Diffusion fallback');
+            
+          } catch (sdError) {
+            console.error('All image generation methods failed:', sdError);
+          }
         }
       }
     }
@@ -381,16 +484,19 @@ The GENERATE_IMAGE description should be brief: just the jewelry type, main mate
     res.status(200).json({
       message: cleanMessage,
       imageUrl: imageResult?.dataUrl || null,
-      publicUrl: imageResult?.publicUrl || null,
-      downloadUrl: imageResult?.dataUrl || null,
+      videoUrl: videoResult?.dataUrl || null,
+      publicUrl: imageResult?.publicUrl || videoResult?.publicUrl || null,
+      downloadUrl: imageResult?.dataUrl || videoResult?.dataUrl || null,
       conversationId: Date.now(),
       referenceImage: referenceImageData, // Include reference image data
-      metadata: imageResult ? {
-        filename: imageResult.filename,
-        type: 'image/png',
+      contentType: videoResult ? 'video' : 'image',
+      metadata: (imageResult || videoResult) ? {
+        filename: imageResult?.filename || videoResult?.filename,
+        type: videoResult ? 'video/mp4' : 'image/png',
         downloadable: true,
-        publicUrl: imageResult.publicUrl,
-        referenceImage: referenceImageData // Also include in metadata
+        publicUrl: imageResult?.publicUrl || videoResult?.publicUrl,
+        referenceImage: referenceImageData, // Also include in metadata
+        isVideo: !!videoResult
       } : null
     });
     
