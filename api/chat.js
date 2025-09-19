@@ -41,7 +41,10 @@ const bucketName = process.env.GOOGLE_STORAGE_BUCKET || 'jewelry-designs-bucket'
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB limit
+    fileSize: 10 * 1024 * 1024, // 10MB limit for files
+    fieldSize: 5 * 1024 * 1024,  // 5MB limit for form fields (increased for base64 image data)
+    fields: 20,                   // Allow up to 20 form fields
+    fieldNameSize: 100           // Maximum field name size
   },
   fileFilter: (req, file, cb) => {
     if (file.mimetype.startsWith('image/')) {
