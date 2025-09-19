@@ -1,4 +1,4 @@
-// api/chat.js - Updated with refined catalog-style image generation
+// api/chat.js - Complete backend with video support
 const { Anthropic } = require('@anthropic-ai/sdk');
 const { GoogleAuth } = require('google-auth-library');
 const { VertexAI } = require('@google-cloud/vertexai');
@@ -198,39 +198,6 @@ async function generateImageWithVertex(prompt, referenceImageAnalysis = '') {
   }
 }
 
-// Enhanced fallback with mandatory positioning
-async function fallbackToStableDiffusion(prompt, referenceImageAnalysis = '') {
-  const Replicate = require('replicate');
-  const replicate = new Replicate({
-    auth: process.env.REPLICATE_API_TOKEN,
-  });
-  
-  // Enhanced catalog prompt with mandatory requirements
-  const catalogPrompt = referenceImageAnalysis 
-    ? `jewelry product photography: ${prompt}, inspired by: ${referenceImageAnalysis}. MUST BE: pure white background, three-quarter view angle, professional studio lighting, sparkling`
-    : `jewelry product photography: ${prompt}. MUST BE: pure white background, three-quarter view angle, professional studio lighting, sparkling`;
-  
-  const output = await replicate.run(
-    "stability-ai/stable-diffusion:27b93a2413e7f36cd83da926f3656280b2931564ff050bf9575f1fdf9bcd7478",
-    {
-      input: {
-        prompt: catalogPrompt,
-        negative_prompt: "colored background, dark background, gray background, black background, textured background, front view, side view, back view, top view, multiple angles, blurry, low quality, hands, people, multiple items, text, shadows on background",
-        width: 768,
-        height: 768,
-        num_inference_steps: 20, // Reduced from 25 to save quota
-        guidance_scale: 7.5 // Increased slightly for better adherence to prompt
-      }
-    }
-  );
-  
-  return {
-    dataUrl: output[0],
-    publicUrl: output[0],
-    filename: `jewelry-catalog-${Date.now()}.png`
-  };
-}
-
 async function generateVideoWithVertex(prompt, referenceImageAnalysis = '') {
   try {
     const model = vertexAI.getGenerativeModel({
@@ -290,6 +257,40 @@ async function generateVideoWithVertex(prompt, referenceImageAnalysis = '') {
     console.error('Vertex AI video generation error:', error);
     throw error;
   }
+}
+
+// Enhanced fallback with mandatory positioning
+async function fallbackToStableDiffusion(prompt, referenceImageAnalysis = '') {
+  const Replicate = require('replicate');
+  const replicate = new Replicate({
+    auth: process.env.REPLICATE_API_TOKEN,
+  });
+  
+  // Enhanced catalog prompt with mandatory requirements
+  const catalogPrompt = referenceImageAnalysis 
+    ? `jewelry product photography: ${prompt}, inspired by: ${referenceImageAnalysis}. MUST BE: pure white background, three-quarter view angle, professional studio lighting, sparkling`
+    : `jewelry product photography: ${prompt}. MUST BE: pure white background, three-quarter view angle, professional studio lighting, sparkling`;
+  
+  const output = await replicate.run(
+    "stability-ai/stable-diffusion:27b93a2413e7f36cd83da926f3656280b2931564ff050bf9575f1fdf9bcd7478",
+    {
+      input: {
+        prompt: catalogPrompt,
+        negative_prompt: "colored background, dark background, gray background, black background, textured background, front view, side view, back view, top view, multiple angles, blurry, low quality, hands, people, multiple items, text, shadows on background",
+        width: 768,
+        height: 768,
+        num_inference_steps: 20, // Reduced from 25 to save quota
+        guidance_scale: 7.5 // Increased slightly for better adherence to prompt
+      }
+    }
+  );
+  
+  return {
+    dataUrl: output[0],
+    publicUrl: output[0],
+    filename: `jewelry-catalog-${Date.now()}.png`
+  };
+}
 
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -488,14 +489,14 @@ For video requests, end with: GENERATE_VIDEO: [same brief description for rotati
       publicUrl: imageResult?.publicUrl || videoResult?.publicUrl || null,
       downloadUrl: imageResult?.dataUrl || videoResult?.dataUrl || null,
       conversationId: Date.now(),
-      referenceImage: referenceImageData, // Include reference image data
+      referenceImage: referenceImageData,
       contentType: videoResult ? 'video' : 'image',
       metadata: (imageResult || videoResult) ? {
         filename: imageResult?.filename || videoResult?.filename,
         type: videoResult ? 'video/mp4' : 'image/png',
         downloadable: true,
         publicUrl: imageResult?.publicUrl || videoResult?.publicUrl,
-        referenceImage: referenceImageData, // Also include in metadata
+        referenceImage: referenceImageData,
         isVideo: !!videoResult
       } : null
     });
