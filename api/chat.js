@@ -1,4 +1,4 @@
-// api/chat.js - Complete backend with video support
+// api/chat.js - Complete backend with video support and image refinement
 const { Anthropic } = require('@anthropic-ai/sdk');
 const { GoogleAuth } = require('google-auth-library');
 const { VertexAI } = require('@google-cloud/vertexai');
@@ -134,7 +134,7 @@ Keep the description concise but detailed enough for jewelry photography generat
   }
 }
 
-async function generateImageWithVertex(prompt, referenceImageAnalysis = '') {
+async function generateImageWithVertex(prompt, referenceImageAnalysis = '', isRefinement = false, baseImageDescription = '') {
   try {
     const authClient = await auth.getClient();
     const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID;
@@ -142,10 +142,16 @@ async function generateImageWithVertex(prompt, referenceImageAnalysis = '') {
 
     const url = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/imagen-3.0-generate-001:predict`;
 
-    // Enhanced catalog-style prompt with mandatory positioning
-    const catalogPrompt = referenceImageAnalysis 
-      ? `jewelry product photography: ${prompt}, inspired by: ${referenceImageAnalysis}. MUST BE: pure white background, three-quarter view angle, professional studio lighting, sparkling reflections`
-      : `jewelry product photography: ${prompt}. MUST BE: pure white background, three-quarter view angle, professional studio lighting, sparkling reflections`;
+    // Enhanced catalog-style prompt with refinement context
+    let catalogPrompt;
+    
+    if (isRefinement && baseImageDescription) {
+      catalogPrompt = `jewelry product photography refinement: Starting with ${baseImageDescription}, now ${prompt}. MUST BE: pure white background, three-quarter view angle, professional studio lighting, sparkling reflections`;
+    } else if (referenceImageAnalysis) {
+      catalogPrompt = `jewelry product photography: ${prompt}, inspired by: ${referenceImageAnalysis}. MUST BE: pure white background, three-quarter view angle, professional studio lighting, sparkling reflections`;
+    } else {
+      catalogPrompt = `jewelry product photography: ${prompt}. MUST BE: pure white background, three-quarter view angle, professional studio lighting, sparkling reflections`;
+    }
 
     const requestBody = {
       instances: [{
@@ -179,7 +185,9 @@ async function generateImageWithVertex(prompt, referenceImageAnalysis = '') {
         const buffer = Buffer.from(prediction.bytesBase64Encoded, 'base64');
         
         // Upload to Google Cloud Storage and get public URL
-        const filename = `jewelry-catalog-${Date.now()}.png`;
+        const filename = isRefinement 
+          ? `jewelry-refined-${Date.now()}.png`
+          : `jewelry-catalog-${Date.now()}.png`;
         const publicUrl = await uploadImageToStorage(buffer, filename, 'image/png');
         
         return {
@@ -328,17 +336,23 @@ async function generateVideoWithVertex(prompt, referenceImageAnalysis = '') {
   }
 }
 
-// Enhanced fallback with mandatory positioning
-async function fallbackToStableDiffusion(prompt, referenceImageAnalysis = '') {
+// Enhanced fallback with refinement support
+async function fallbackToStableDiffusion(prompt, referenceImageAnalysis = '', isRefinement = false, baseImageDescription = '') {
   const Replicate = require('replicate');
   const replicate = new Replicate({
     auth: process.env.REPLICATE_API_TOKEN,
   });
   
-  // Enhanced catalog prompt with mandatory requirements
-  const catalogPrompt = referenceImageAnalysis 
-    ? `jewelry product photography: ${prompt}, inspired by: ${referenceImageAnalysis}. MUST BE: pure white background, three-quarter view angle, professional studio lighting, sparkling`
-    : `jewelry product photography: ${prompt}. MUST BE: pure white background, three-quarter view angle, professional studio lighting, sparkling`;
+  // Enhanced catalog prompt with refinement context
+  let catalogPrompt;
+  
+  if (isRefinement && baseImageDescription) {
+    catalogPrompt = `jewelry product photography refinement: Starting with ${baseImageDescription}, now ${prompt}. MUST BE: pure white background, three-quarter view angle, professional studio lighting, sparkling`;
+  } else if (referenceImageAnalysis) {
+    catalogPrompt = `jewelry product photography: ${prompt}, inspired by: ${referenceImageAnalysis}. MUST BE: pure white background, three-quarter view angle, professional studio lighting, sparkling`;
+  } else {
+    catalogPrompt = `jewelry product photography: ${prompt}. MUST BE: pure white background, three-quarter view angle, professional studio lighting, sparkling`;
+  }
   
   const output = await replicate.run(
     "stability-ai/stable-diffusion:27b93a2413e7f36cd83da926f3656280b2931564ff050bf9575f1fdf9bcd7478",
@@ -348,8 +362,8 @@ async function fallbackToStableDiffusion(prompt, referenceImageAnalysis = '') {
         negative_prompt: "colored background, dark background, gray background, black background, textured background, front view, side view, back view, top view, multiple angles, blurry, low quality, hands, people, multiple items, text, shadows on background",
         width: 768,
         height: 768,
-        num_inference_steps: 20, // Reduced from 25 to save quota
-        guidance_scale: 7.5 // Increased slightly for better adherence to prompt
+        num_inference_steps: 20,
+        guidance_scale: 7.5
       }
     }
   );
@@ -357,7 +371,9 @@ async function fallbackToStableDiffusion(prompt, referenceImageAnalysis = '') {
   return {
     dataUrl: output[0],
     publicUrl: output[0],
-    filename: `jewelry-catalog-${Date.now()}.png`
+    filename: isRefinement 
+      ? `jewelry-refined-${Date.now()}.png`
+      : `jewelry-catalog-${Date.now()}.png`
   };
 }
 
@@ -385,9 +401,9 @@ module.exports = async function handler(req, res) {
       });
     });
 
-    const { message, conversationHistory = [] } = req.body;
+    const { message, conversationHistory = [], isRefinement = 'false', baseImageData, refinementCount = '0' } = req.body;
     
-    // Parse conversationHistory if it's a string (from FormData)
+    // Parse data from FormData
     let parsedHistory = [];
     if (typeof conversationHistory === 'string') {
       try {
@@ -399,6 +415,24 @@ module.exports = async function handler(req, res) {
     } else if (Array.isArray(conversationHistory)) {
       parsedHistory = conversationHistory;
     }
+
+    // Parse refinement data
+    const isRefinementRequest = isRefinement === 'true';
+    let baseImageInfo = null;
+    if (isRefinementRequest && baseImageData) {
+      try {
+        baseImageInfo = JSON.parse(baseImageData);
+      } catch (e) {
+        console.error('Could not parse base image data:', e);
+      }
+    }
+
+    console.log('Processing request:', {
+      isRefinement: isRefinementRequest,
+      hasBaseImage: !!baseImageInfo,
+      refinementCount,
+      message: message?.substring(0, 50) + '...'
+    });
     
     let referenceImageData = null;
     let referenceImageAnalysis = '';
@@ -435,12 +469,25 @@ module.exports = async function handler(req, res) {
       }
     }
 
-    // Step 1: Claude consultation with reference context and updated system prompt
-    const systemPrompt = `You are a jewelry designer assistant. Keep responses brief and focused (2-3 sentences max). A retailer is asking you to create a catalog image of jewelry based on a consumer request.
+    // Step 1: Claude consultation with refinement context
+    let systemPrompt = `You are a jewelry designer assistant. Keep responses brief and focused (2-3 sentences max). A retailer is asking you to create a catalog image of jewelry based on a consumer request.
 
 ${referenceImageData ? `Reference image shows: ${referenceImageAnalysis}
 
-Create a design inspired by this reference.` : ''}
+Create a design inspired by this reference.` : ''}`;
+
+    // Add refinement context to system prompt
+    if (isRefinementRequest && baseImageInfo) {
+      systemPrompt += `
+
+REFINEMENT MODE: You are refining an existing jewelry design. The user wants to modify the current design.
+Previous design: The user is working with an existing jewelry piece and wants modifications.
+This is refinement #${refinementCount}.
+
+Focus on the specific changes requested while maintaining the overall jewelry aesthetic.`;
+    }
+
+    systemPrompt += `
 
 IMPORTANT FORMATTING:
 - Keep responses concise and professional
@@ -455,7 +502,12 @@ For video requests, end with: GENERATE_VIDEO: [same brief description for rotati
 
     const claudeMessages = [
       ...parsedHistory.filter(msg => msg.role !== 'system'),
-      { role: 'user', content: message || 'Please create jewelry inspired by this reference image' }
+      { 
+        role: 'user', 
+        content: isRefinementRequest 
+          ? `Please refine the current design: ${message}` 
+          : (message || 'Please create jewelry inspired by this reference image')
+      }
     ];
 
     const claudeResponse = await anthropic.messages.create({
@@ -467,7 +519,7 @@ For video requests, end with: GENERATE_VIDEO: [same brief description for rotati
     
     const claudeMessage = claudeResponse.content[0].text;
     
-    // Step 2: Image/Video generation with reference context
+    // Step 2: Image/Video generation with refinement context
     let imageResult = null;
     let videoResult = null;
     
@@ -497,7 +549,8 @@ For video requests, end with: GENERATE_VIDEO: [same brief description for rotati
       message.toLowerCase().includes('create') ||
       message.toLowerCase().includes('image') ||
       claudeMessage.includes('GENERATE_IMAGE:') ||
-      referenceImageData // Always generate if reference image provided
+      referenceImageData || // Always generate if reference image provided
+      isRefinementRequest // Always generate for refinements
     );
     
     if (isJewelryRequest) {
@@ -511,8 +564,14 @@ For video requests, end with: GENERATE_VIDEO: [same brief description for rotati
         prompt = `${message.replace(/generate|create|image|video|of|an?/gi, '').trim()}, professional jewelry photography style`;
       }
       
+      // Create base image description for refinements
+      let baseImageDescription = '';
+      if (isRefinementRequest && baseImageInfo && baseImageInfo.metadata) {
+        baseImageDescription = `elegant jewelry piece (previous design)`;
+      }
+      
       if (isVideoRequest) {
-        // Generate video
+        // Generate video (refinement not supported for video yet)
         try {
           console.log('Generating video with prompt:', prompt);
           console.log('Reference analysis:', referenceImageAnalysis || 'None');
@@ -525,12 +584,19 @@ For video requests, end with: GENERATE_VIDEO: [same brief description for rotati
           // No fallback for video - just log the error
         }
       } else {
-        // Generate image (existing logic)
+        // Generate image with refinement support
         try {
           console.log('Generating image with prompt:', prompt);
           console.log('Reference analysis:', referenceImageAnalysis || 'None');
+          console.log('Is refinement:', isRefinementRequest);
+          console.log('Base image description:', baseImageDescription || 'None');
           
-          imageResult = await generateImageWithVertex(prompt, referenceImageAnalysis);
+          imageResult = await generateImageWithVertex(
+            prompt, 
+            referenceImageAnalysis, 
+            isRefinementRequest, 
+            baseImageDescription
+          );
           console.log('Image generated successfully with Google Vertex AI');
           
         } catch (imageError) {
@@ -538,7 +604,12 @@ For video requests, end with: GENERATE_VIDEO: [same brief description for rotati
           
           try {
             console.log('Falling back to Stable Diffusion');
-            imageResult = await fallbackToStableDiffusion(prompt, referenceImageAnalysis);
+            imageResult = await fallbackToStableDiffusion(
+              prompt, 
+              referenceImageAnalysis, 
+              isRefinementRequest, 
+              baseImageDescription
+            );
             console.log('Image generated with Stable Diffusion fallback');
             
           } catch (sdError) {
@@ -560,13 +631,17 @@ For video requests, end with: GENERATE_VIDEO: [same brief description for rotati
       conversationId: Date.now(),
       referenceImage: referenceImageData,
       contentType: videoResult ? 'video' : 'image',
+      isRefinement: isRefinementRequest,
+      refinementCount: parseInt(refinementCount) + (isRefinementRequest ? 1 : 0),
       metadata: (imageResult || videoResult) ? {
         filename: imageResult?.filename || videoResult?.filename,
         type: videoResult ? 'video/mp4' : 'image/png',
         downloadable: true,
         publicUrl: imageResult?.publicUrl || videoResult?.publicUrl,
         referenceImage: referenceImageData,
-        isVideo: !!videoResult
+        isVideo: !!videoResult,
+        isRefinement: isRefinementRequest,
+        refinementCount: parseInt(refinementCount) + (isRefinementRequest ? 1 : 0)
       } : null
     });
     
