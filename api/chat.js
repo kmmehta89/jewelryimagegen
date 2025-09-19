@@ -201,10 +201,9 @@ async function generateImageWithVertex(prompt, referenceImageAnalysis = '') {
 async function generateVideoWithVertex(prompt, referenceImageAnalysis = '') {
   try {
     const model = vertexAI.getGenerativeModel({
-      model: 'imagen-3.0-generate-video-001',
+      model: 'veo-3.0-fast-generate-001', // Using Veo 3 Fast for speed
     });
 
-    // Enhanced video prompt for jewelry showcase
     const videoPrompt = referenceImageAnalysis 
       ? `jewelry product video: ${prompt}, inspired by: ${referenceImageAnalysis}. MUST BE: pure white background, rotating three-quarter view showcase, professional studio lighting, sparkling reflections, smooth rotation, 360-degree turn, luxury presentation`
       : `jewelry product video: ${prompt}. MUST BE: pure white background, rotating three-quarter view showcase, professional studio lighting, sparkling reflections, smooth rotation, 360-degree turn, luxury presentation`;
@@ -254,7 +253,77 @@ async function generateVideoWithVertex(prompt, referenceImageAnalysis = '') {
     throw new Error('No video generated in response');
 
   } catch (error) {
-    console.error('Vertex AI video generation error:', error);
+    console.error('Veo 3 video generation error:', error);
+    
+    // If Veo 3 Fast fails, try standard Veo 3
+    if (error.message.includes('not found') || error.message.includes('404')) {
+      try {
+        console.log('Trying standard Veo 3 model...');
+        const fallbackModel = vertexAI.getGenerativeModel({
+          model: 'veo-3.0-generate-001',
+        });
+        
+        const fallbackResponse = await fallbackModel.generateContent(request);
+        
+        if (fallbackResponse.response && fallbackResponse.response.candidates && fallbackResponse.response.candidates[0]) {
+          const candidate = fallbackResponse.response.candidates[0];
+          
+          if (candidate.content && candidate.content.parts && candidate.content.parts[0]) {
+            const videoPart = candidate.content.parts[0];
+            
+            if (videoPart.inlineData && videoPart.inlineData.data) {
+              const videoBuffer = Buffer.from(videoPart.inlineData.data, 'base64');
+              const filename = `jewelry-video-${Date.now()}.mp4`;
+              const publicUrl = await uploadImageToStorage(videoBuffer, filename, 'video/mp4');
+              
+              return {
+                dataUrl: `data:video/mp4;base64,${videoPart.inlineData.data}`,
+                publicUrl: publicUrl,
+                filename: filename,
+                type: 'video'
+              };
+            }
+          }
+        }
+      } catch (fallbackError) {
+        console.error('Fallback Veo 3 also failed:', fallbackError);
+        
+        // Try Veo 2 as final fallback
+        try {
+          console.log('Trying Veo 2 as final fallback...');
+          const veo2Model = vertexAI.getGenerativeModel({
+            model: 'veo-2.0-generate-001',
+          });
+          
+          const veo2Response = await veo2Model.generateContent(request);
+          
+          if (veo2Response.response && veo2Response.response.candidates && veo2Response.response.candidates[0]) {
+            const candidate = veo2Response.response.candidates[0];
+            
+            if (candidate.content && candidate.content.parts && candidate.content.parts[0]) {
+              const videoPart = candidate.content.parts[0];
+              
+              if (videoPart.inlineData && videoPart.inlineData.data) {
+                const videoBuffer = Buffer.from(videoPart.inlineData.data, 'base64');
+                const filename = `jewelry-video-${Date.now()}.mp4`;
+                const publicUrl = await uploadImageToStorage(videoBuffer, filename, 'video/mp4');
+                
+                return {
+                  dataUrl: `data:video/mp4;base64,${videoPart.inlineData.data}`,
+                  publicUrl: publicUrl,
+                  filename: filename,
+                  type: 'video'
+                };
+              }
+            }
+          }
+        } catch (veo2Error) {
+          console.error('All Veo models failed:', veo2Error);
+          throw new Error('Video generation not available. Please try generating an image instead.');
+        }
+      }
+    }
+    
     throw error;
   }
 }
