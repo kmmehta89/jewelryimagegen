@@ -19,7 +19,12 @@ module.exports = async function handler(req, res) {
   }
 
   try {
+    console.log('Request body:', req.body);
+    
     const { email, sessionData, conversationHistory, conversionTrigger } = req.body;
+    
+    console.log('Processing contact for email:', email);
+    console.log('Session data:', sessionData);
     
     const contactProperties = {
       email: email,
@@ -33,10 +38,14 @@ module.exports = async function handler(req, res) {
       conversion_trigger: conversionTrigger
     };
 
+    console.log('Contact properties to send:', contactProperties);
+
     const response = await hubspotClient.crm.contacts.basicApi.create({
       properties: contactProperties,
       associations: []
     });
+
+    console.log('HubSpot create response:', response);
 
     res.status(200).json({ 
       success: true, 
@@ -44,8 +53,12 @@ module.exports = async function handler(req, res) {
     });
 
   } catch (error) {
+    console.error('HubSpot API Error:', error);
+    console.error('Error message:', error.message);
+    console.error('Error response data:', error.response?.data);
+    
     if (error.message.includes('Contact already exists')) {
-      // Update existing contact
+      console.log('Contact exists, attempting update...');
       try {
         const updateResponse = await hubspotClient.crm.contacts.basicApi.update(
           email,
@@ -53,15 +66,21 @@ module.exports = async function handler(req, res) {
           undefined,
           'email'
         );
+        console.log('Update successful:', updateResponse);
         res.status(200).json({ 
           success: true, 
           contactId: updateResponse.id 
         });
       } catch (updateError) {
+        console.error('Update error:', updateError);
+        console.error('Update error response:', updateError.response?.data);
         res.status(500).json({ error: updateError.message });
       }
     } else {
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ 
+        error: error.message,
+        details: error.response?.data || 'No additional details'
+      });
     }
   }
 };
