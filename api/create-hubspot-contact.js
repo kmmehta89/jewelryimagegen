@@ -1,11 +1,3 @@
-// Add this at the beginning of your try block for testing:
-console.log('Testing HubSpot token...');
-console.log('Token starts with:', process.env.HUBSPOT_ACCESS_TOKEN?.substring(0, 10));
-
-// Simple test call
-const testResponse = await hubspotClient.crm.contacts.basicApi.getPage();
-console.log('Token test successful');
-
 const hubspot = require('@hubspot/api-client');
 
 const hubspotClient = new hubspot.Client({
@@ -27,6 +19,14 @@ module.exports = async function handler(req, res) {
   }
 
   try {
+    // Add this at the beginning of your try block for testing:
+    console.log('Testing HubSpot token...');
+    console.log('Token starts with:', process.env.HUBSPOT_ACCESS_TOKEN?.substring(0, 10));
+    
+    // Simple test call
+    const testResponse = await hubspotClient.crm.contacts.basicApi.getPage();
+    console.log('Token test successful');
+
     console.log('Request body:', req.body);
     
     const { email, sessionData, conversationHistory, conversionTrigger } = req.body;
