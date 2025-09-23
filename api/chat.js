@@ -55,225 +55,6 @@ const upload = multer({
   }
 });
 
-// Enhanced video generation manager with rate limiting
-class VideoGenerationManager {
-  constructor() {
-    this.requestQueue = [];
-    this.processing = false;
-    this.lastRequestTime = 0;
-    this.minRequestInterval = 600; // 600ms = 100 requests/minute (your approved quota)
-    this.maxRetries = 3;
-    this.requestCount = 0;
-    this.windowStart = Date.now();
-    this.maxRequestsPerMinute = 100; // Your approved quota limit
-  }
-
-  async generateVideo(prompt, referenceImageAnalysis = '') {
-    return new Promise((resolve, reject) => {
-      this.requestQueue.push({ prompt, referenceImageAnalysis, resolve, reject, timestamp: Date.now() });
-      this.processQueue();
-    });
-  }
-
-  async processQueue() {
-    if (this.processing || this.requestQueue.length === 0) return;
-    
-    this.processing = true;
-    console.log(`Processing video queue: ${this.requestQueue.length} requests pending`);
-    
-    while (this.requestQueue.length > 0) {
-      const { prompt, referenceImageAnalysis, resolve, reject, timestamp } = this.requestQueue.shift();
-      
-      try {
-        // Check if request is too old (5 minutes timeout)
-        if (Date.now() - timestamp > 300000) {
-          reject(new Error('Request timed out in queue'));
-          continue;
-        }
-
-        // Rate limiting: ensure minimum interval between requests
-        const now = Date.now();
-        const timeSinceLastRequest = now - this.lastRequestTime;
-        if (timeSinceLastRequest < this.minRequestInterval) {
-          const waitTime = this.minRequestInterval - timeSinceLastRequest;
-          console.log(`Rate limiting: waiting ${waitTime}ms before next video request`);
-          await new Promise(resolve => setTimeout(resolve, waitTime));
-        }
-
-        // Check quota availability before making request
-        if (!this.checkQuotaAvailability()) {
-          const resetTime = 60000 - (Date.now() - this.windowStart);
-          console.log(`Quota exhausted, waiting ${resetTime}ms for reset`);
-          await new Promise(resolve => setTimeout(resolve, resetTime));
-          this.resetQuotaWindow();
-        }
-        
-        const result = await this.generateVideoWithRetry(prompt, referenceImageAnalysis);
-        this.lastRequestTime = Date.now();
-        this.incrementRequestCount();
-        resolve(result);
-        
-        // Small additional delay to be conservative
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
-      } catch (error) {
-        console.error('Video generation failed:', error);
-        reject(error);
-      }
-    }
-    
-    this.processing = false;
-    console.log('Video queue processing completed');
-  }
-
-  checkQuotaAvailability() {
-    const now = Date.now();
-    const windowDuration = 60000; // 1 minute
-    
-    // Reset counter if window has passed
-    if (now - this.windowStart > windowDuration) {
-      this.resetQuotaWindow();
-    }
-    
-    return this.requestCount < this.maxRequestsPerMinute;
-  }
-
-  resetQuotaWindow() {
-    this.requestCount = 0;
-    this.windowStart = Date.now();
-    console.log('Quota window reset');
-  }
-
-  incrementRequestCount() {
-    this.requestCount++;
-    console.log(`Quota usage: ${this.requestCount}/${this.maxRequestsPerMinute} requests this minute`);
-  }
-
-  async generateVideoWithRetry(prompt, referenceImageAnalysis = '') {
-    for (let attempt = 0; attempt < this.maxRetries; attempt++) {
-      try {
-        console.log(`Video generation attempt ${attempt + 1}/${this.maxRetries}`);
-        return await this.generateSingleVideo(prompt, referenceImageAnalysis);
-      } catch (error) {
-        console.error(`Video generation attempt ${attempt + 1} failed:`, error);
-        
-        if (error.message && (error.message.includes('429') || error.message.includes('Quota exceeded'))) {
-          if (attempt < this.maxRetries - 1) {
-            // Exponential backoff for quota errors, starting at 10 seconds
-            const backoffTime = Math.pow(2, attempt) * 10000; // 10s, 20s, 40s
-            console.log(`Quota exceeded, backing off for ${backoffTime}ms`);
-            await new Promise(resolve => setTimeout(resolve, backoffTime));
-            continue;
-          }
-          
-          // If all retries failed due to quota, throw specific error
-          throw new Error('Video generation quota exceeded despite rate limiting. Please try again later or contact support.');
-        }
-        
-        // For non-quota errors, try fallbacks on last attempt
-        if (attempt === this.maxRetries - 1) {
-          throw error;
-        }
-        
-        // Small delay before retry for non-quota errors
-        await new Promise(resolve => setTimeout(resolve, 2000));
-      }
-    }
-  }
-
-  async generateSingleVideo(prompt, referenceImageAnalysis = '') {
-    const videoPrompt = referenceImageAnalysis 
-      ? `jewelry product video: ${prompt}, inspired by: ${referenceImageAnalysis}. MUST BE: pure white background, rotating three-quarter view showcase, professional studio lighting, sparkling reflections, smooth rotation, 360-degree turn, luxury presentation`
-      : `jewelry product video: ${prompt}. MUST BE: pure white background, rotating three-quarter view showcase, professional studio lighting, sparkling reflections, smooth rotation, 360-degree turn, luxury presentation`;
-
-    console.log('Generating video with Veo 3 Fast...');
-
-    const request = {
-      contents: [{
-        role: 'user',
-        parts: [{
-          text: videoPrompt
-        }]
-      }],
-      generationConfig: {
-        maxOutputTokens: 1024,
-        temperature: 0.2,
-      },
-      safetySettings: [
-        {
-          category: 'HARM_CATEGORY_DANGEROUS_CONTENT',
-          threshold: 'BLOCK_MEDIUM_AND_ABOVE'
-        }
-      ]
-    };
-
-    try {
-      // Try Veo 3 Fast first
-      const model = vertexAI.getGenerativeModel({
-        model: 'veo-3.0-fast-generate-001',
-      });
-
-      const response = await model.generateContent(request);
-      return this.processVideoResponse(response, 'veo-3.0-fast');
-      
-    } catch (error) {
-      console.error('Veo 3 Fast failed, trying standard Veo 3:', error);
-      
-      // Fallback to standard Veo 3
-      try {
-        const fallbackModel = vertexAI.getGenerativeModel({
-          model: 'veo-3.0-generate-001',
-        });
-        
-        const response = await fallbackModel.generateContent(request);
-        return this.processVideoResponse(response, 'veo-3.0');
-        
-      } catch (fallbackError) {
-        console.error('Standard Veo 3 also failed, trying Veo 2:', fallbackError);
-        
-        // Final fallback to Veo 2
-        const veo2Model = vertexAI.getGenerativeModel({
-          model: 'veo-2.0-generate-001',
-        });
-        
-        const response = await veo2Model.generateContent(request);
-        return this.processVideoResponse(response, 'veo-2.0');
-      }
-    }
-  }
-
-  async processVideoResponse(response, modelUsed = 'unknown') {
-    if (response.response && response.response.candidates && response.response.candidates[0]) {
-      const candidate = response.response.candidates[0];
-      
-      if (candidate.content && candidate.content.parts && candidate.content.parts[0]) {
-        const videoPart = candidate.content.parts[0];
-        
-        if (videoPart.inlineData && videoPart.inlineData.data) {
-          const videoBuffer = Buffer.from(videoPart.inlineData.data, 'base64');
-          const filename = `jewelry-video-${modelUsed}-${Date.now()}.mp4`;
-          const publicUrl = await uploadImageToStorage(videoBuffer, filename, 'video/mp4');
-          
-          console.log(`Video generated successfully using ${modelUsed}`);
-          
-          return {
-            dataUrl: `data:video/mp4;base64,${videoPart.inlineData.data}`,
-            publicUrl: publicUrl,
-            filename: filename,
-            type: 'video',
-            modelUsed: modelUsed
-          };
-        }
-      }
-    }
-    
-    throw new Error('No video generated in response');
-  }
-}
-
-// Create singleton instance
-const videoManager = new VideoGenerationManager();
-
 async function uploadImageToStorage(buffer, filename, contentType = 'image/png') {
   try {
     const bucket = storage.bucket(bucketName);
@@ -428,16 +209,132 @@ async function generateImageWithVertex(prompt, referenceImageAnalysis = '', isRe
   }
 }
 
-// Updated generateVideoWithVertex function using the manager
 async function generateVideoWithVertex(prompt, referenceImageAnalysis = '') {
-  console.log('Video generation request received:', { prompt: prompt.substring(0, 50) + '...', hasReference: !!referenceImageAnalysis });
-  
   try {
-    const result = await videoManager.generateVideo(prompt, referenceImageAnalysis);
-    console.log('Video generation completed successfully');
-    return result;
+    const model = vertexAI.getGenerativeModel({
+      model: 'veo-3.0-fast-generate-001', // Using Veo 3 Fast for speed
+    });
+
+    const videoPrompt = referenceImageAnalysis 
+      ? `jewelry product video: ${prompt}, inspired by: ${referenceImageAnalysis}. MUST BE: pure white background, rotating three-quarter view showcase, professional studio lighting, sparkling reflections, smooth rotation, 360-degree turn, luxury presentation`
+      : `jewelry product video: ${prompt}. MUST BE: pure white background, rotating three-quarter view showcase, professional studio lighting, sparkling reflections, smooth rotation, 360-degree turn, luxury presentation`;
+
+    const request = {
+      contents: [{
+        role: 'user',
+        parts: [{
+          text: videoPrompt
+        }]
+      }],
+      generationConfig: {
+        maxOutputTokens: 1024,
+        temperature: 0.2,
+      },
+      safetySettings: [
+        {
+          category: 'HARM_CATEGORY_DANGEROUS_CONTENT',
+          threshold: 'BLOCK_MEDIUM_AND_ABOVE'
+        }
+      ]
+    };
+
+    const response = await model.generateContent(request);
+    
+    if (response.response && response.response.candidates && response.response.candidates[0]) {
+      const candidate = response.response.candidates[0];
+      
+      if (candidate.content && candidate.content.parts && candidate.content.parts[0]) {
+        const videoPart = candidate.content.parts[0];
+        
+        if (videoPart.inlineData && videoPart.inlineData.data) {
+          const videoBuffer = Buffer.from(videoPart.inlineData.data, 'base64');
+          const filename = `jewelry-video-${Date.now()}.mp4`;
+          const publicUrl = await uploadImageToStorage(videoBuffer, filename, 'video/mp4');
+          
+          return {
+            dataUrl: `data:video/mp4;base64,${videoPart.inlineData.data}`,
+            publicUrl: publicUrl,
+            filename: filename,
+            type: 'video'
+          };
+        }
+      }
+    }
+
+    throw new Error('No video generated in response');
+
   } catch (error) {
-    console.error('Vertex AI video generation error:', error);
+    console.error('Veo 3 video generation error:', error);
+    
+    // If Veo 3 Fast fails, try standard Veo 3
+    if (error.message.includes('not found') || error.message.includes('404')) {
+      try {
+        console.log('Trying standard Veo 3 model...');
+        const fallbackModel = vertexAI.getGenerativeModel({
+          model: 'veo-3.0-generate-001',
+        });
+        
+        const fallbackResponse = await fallbackModel.generateContent(request);
+        
+        if (fallbackResponse.response && fallbackResponse.response.candidates && fallbackResponse.response.candidates[0]) {
+          const candidate = fallbackResponse.response.candidates[0];
+          
+          if (candidate.content && candidate.content.parts && candidate.content.parts[0]) {
+            const videoPart = candidate.content.parts[0];
+            
+            if (videoPart.inlineData && videoPart.inlineData.data) {
+              const videoBuffer = Buffer.from(videoPart.inlineData.data, 'base64');
+              const filename = `jewelry-video-${Date.now()}.mp4`;
+              const publicUrl = await uploadImageToStorage(videoBuffer, filename, 'video/mp4');
+              
+              return {
+                dataUrl: `data:video/mp4;base64,${videoPart.inlineData.data}`,
+                publicUrl: publicUrl,
+                filename: filename,
+                type: 'video'
+              };
+            }
+          }
+        }
+      } catch (fallbackError) {
+        console.error('Fallback Veo 3 also failed:', fallbackError);
+        
+        // Try Veo 2 as final fallback
+        try {
+          console.log('Trying Veo 2 as final fallback...');
+          const veo2Model = vertexAI.getGenerativeModel({
+            model: 'veo-2.0-generate-001',
+          });
+          
+          const veo2Response = await veo2Model.generateContent(request);
+          
+          if (veo2Response.response && veo2Response.response.candidates && veo2Response.response.candidates[0]) {
+            const candidate = veo2Response.response.candidates[0];
+            
+            if (candidate.content && candidate.content.parts && candidate.content.parts[0]) {
+              const videoPart = candidate.content.parts[0];
+              
+              if (videoPart.inlineData && videoPart.inlineData.data) {
+                const videoBuffer = Buffer.from(videoPart.inlineData.data, 'base64');
+                const filename = `jewelry-video-${Date.now()}.mp4`;
+                const publicUrl = await uploadImageToStorage(videoBuffer, filename, 'video/mp4');
+                
+                return {
+                  dataUrl: `data:video/mp4;base64,${videoPart.inlineData.data}`,
+                  publicUrl: publicUrl,
+                  filename: filename,
+                  type: 'video'
+                };
+              }
+            }
+          }
+        } catch (veo2Error) {
+          console.error('All Veo models failed:', veo2Error);
+          throw new Error('Video generation not available. Please try generating an image instead.');
+        }
+      }
+    }
+    
     throw error;
   }
 }
@@ -677,7 +574,7 @@ For video requests, end with: GENERATE_VIDEO: [same brief description for rotati
       }
       
       if (isVideoRequest) {
-        // Generate video with rate limiting
+        // Generate video (refinement not supported for video yet)
         try {
           console.log('Generating video with prompt:', prompt);
           console.log('Reference analysis:', referenceImageAnalysis || 'None');
@@ -747,8 +644,7 @@ For video requests, end with: GENERATE_VIDEO: [same brief description for rotati
         referenceImage: referenceImageData,
         isVideo: !!videoResult,
         isRefinement: isRefinementRequest,
-        refinementCount: parseInt(refinementCount) + (isRefinementRequest ? 1 : 0),
-        modelUsed: videoResult?.modelUsed || 'imagen-3.0' // Track which model was used
+        refinementCount: parseInt(refinementCount) + (isRefinementRequest ? 1 : 0)
       } : null
     });
     
