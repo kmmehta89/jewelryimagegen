@@ -197,6 +197,7 @@ function addToImageHistory(existingHistory, newEntry) {
   return limitedEntries.join(';;');
 }
 
+// FIXED: Removed double counting - session data already includes current action counts
 function calculateCumulativeData(existingContact, sessionData, conversionTrigger) {
   const existing = existingContact?.properties || {};
   
@@ -204,12 +205,9 @@ function calculateCumulativeData(existingContact, sessionData, conversionTrigger
     sessionsCount: (parseInt(existing.chatbot_sessions_count) || 0) + 1,
     imagesGenerated: (parseInt(existing.images_generated_count) || 0) + (sessionData.imagesGenerated || 0),
     refinementsMade: (parseInt(existing.refinements_made_count) || 0) + (sessionData.refinementsMade || 0),
-    downloadsCount: (parseInt(existing.downloads_count) || 0) + 
-      (sessionData.downloadsCount || 0) + 
-      (conversionTrigger === 'download' ? 1 : 0),
-    sharesCount: (parseInt(existing.designs_shared_count) || 0) + 
-      (sessionData.sharesCount || 0) + 
-      (conversionTrigger === 'share' ? 1 : 0)
+    // FIXED: Removed the extra increment - sessionData already includes current action
+    downloadsCount: (parseInt(existing.downloads_count) || 0) + (sessionData.downloadsCount || 0),
+    sharesCount: (parseInt(existing.designs_shared_count) || 0) + (sessionData.sharesCount || 0)
   };
 }
 
