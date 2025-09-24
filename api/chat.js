@@ -234,22 +234,25 @@ async function generateVideoWithVertex(prompt, referenceImageAnalysis = '') {
         // Step 1: Start the long-running video generation operation
         const startUrl = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/${modelId}:predictLongRunning`;
 
+        // Use a simpler, more compatible request structure
         const requestBody = {
           instances: [{
             prompt: videoPrompt
           }],
           parameters: {
-            durationSeconds: 5, // Required parameter - 5 seconds duration
-            sampleCount: 1, // Integer, not string
-            aspectRatio: "1:1", // Square aspect ratio for jewelry showcase
-            personGeneration: "disallow", // Don't generate people
-            negativePrompt: "people, hands, fingers, human, person, face, body, colored background, dark background, gray background, black background, textured background, pattern background, multiple items, text, watermark, blurry, low quality"
+            durationSeconds: 5,
+            sampleCount: 1,
+            aspectRatio: "16:9", // Use standard aspect ratio instead of 1:1
+            personGeneration: "disallow"
           }
         };
 
         const { token: accessToken } = await authClient.getAccessToken();
 
         console.log('Starting video generation operation...');
+        console.log('Request URL:', startUrl);
+        console.log('Request body:', JSON.stringify(requestBody, null, 2));
+        
         const startResponse = await axios.post(startUrl, requestBody, {
           headers: {
             'Authorization': `Bearer ${accessToken}`,
@@ -385,6 +388,10 @@ async function generateVideoWithVertex(prompt, referenceImageAnalysis = '') {
         
       } catch (modelError) {
         console.error(`Model ${modelId} failed:`, modelError.message);
+        if (modelError.response) {
+          console.error('Error response status:', modelError.response.status);
+          console.error('Error response data:', JSON.stringify(modelError.response.data, null, 2));
+        }
         lastError = modelError;
         
         // If this is not the last model, try the next one
