@@ -239,7 +239,8 @@ async function generateVideoWithVertex(prompt, referenceImageAnalysis = '') {
             prompt: videoPrompt
           }],
           parameters: {
-            sampleCount: 1,
+            durationSeconds: 5, // Required parameter - 5 seconds duration
+            sampleCount: 1, // Integer, not string
             aspectRatio: "1:1", // Square aspect ratio for jewelry showcase
             personGeneration: "disallow", // Don't generate people
             negativePrompt: "people, hands, fingers, human, person, face, body, colored background, dark background, gray background, black background, textured background, pattern background, multiple items, text, watermark, blurry, low quality"
@@ -298,6 +299,37 @@ async function generateVideoWithVertex(prompt, referenceImageAnalysis = '') {
                 throw new Error(`Video generation failed: ${JSON.stringify(operation.error)}`);
               }
               
+              if (operation.response && operation.response.videos && operation.response.videos[0]) {
+                const video = operation.response.videos[0];
+                
+                if (video.gcsUri) {
+                  // If video is stored in GCS, we need to download it to get base64
+                  console.log('Video stored in GCS:', video.gcsUri);
+                  
+                  // For now, return the GCS URI as the public URL
+                  return {
+                    dataUrl: null, // We don't have base64 data for GCS stored videos
+                    publicUrl: video.gcsUri,
+                    filename: `jewelry-video-${Date.now()}.mp4`,
+                    type: 'video',
+                    isGcsStored: true
+                  };
+                } else if (video.bytesBase64Encoded) {
+                  // Video returned as base64
+                  const videoBuffer = Buffer.from(video.bytesBase64Encoded, 'base64');
+                  const filename = `jewelry-video-${Date.now()}.mp4`;
+                  const publicUrl = await uploadImageToStorage(videoBuffer, filename, 'video/mp4');
+                  
+                  return {
+                    dataUrl: `data:video/mp4;base64,${video.bytesBase64Encoded}`,
+                    publicUrl: publicUrl,
+                    filename: filename,
+                    type: 'video'
+                  };
+                }
+              }
+              
+              // Fallback - check for old response format
               if (operation.response && operation.response.predictions && operation.response.predictions[0]) {
                 const prediction = operation.response.predictions[0];
                 
