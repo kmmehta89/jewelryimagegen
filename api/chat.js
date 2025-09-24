@@ -240,9 +240,9 @@ async function generateVideoWithVertex(prompt, referenceImageAnalysis = '') {
             prompt: videoPrompt
           }],
           parameters: {
-            durationSeconds: 5,
+            durationSeconds: 6, // Use 6 seconds (supported duration)
             sampleCount: 1,
-            aspectRatio: "16:9", // Use standard aspect ratio instead of 1:1
+            aspectRatio: "16:9", // Use standard aspect ratio
             personGeneration: "disallow"
           }
         };
