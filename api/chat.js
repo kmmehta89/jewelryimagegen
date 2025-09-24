@@ -211,131 +211,164 @@ async function generateImageWithVertex(prompt, referenceImageAnalysis = '', isRe
 
 async function generateVideoWithVertex(prompt, referenceImageAnalysis = '') {
   try {
-    const model = vertexAI.getGenerativeModel({
-      model: 'veo-3.0-fast-generate-001', // Using Veo 3 Fast for speed
-    });
+    const authClient = await auth.getClient();
+    const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID;
+    const location = 'us-central1';
 
-    const videoPrompt = referenceImageAnalysis 
-      ? `jewelry product video: ${prompt}, inspired by: ${referenceImageAnalysis}. MUST BE: pure white background, rotating three-quarter view showcase, professional studio lighting, sparkling reflections, smooth rotation, 360-degree turn, luxury presentation`
-      : `jewelry product video: ${prompt}. MUST BE: pure white background, rotating three-quarter view showcase, professional studio lighting, sparkling reflections, smooth rotation, 360-degree turn, luxury presentation`;
+    // Try Veo 3 first (preview), then fallback to Veo 2 (GA)
+    const models = [
+      'veo-3.0-generate-preview',
+      'veo-2.0-generate-001'
+    ];
 
-    const request = {
-      contents: [{
-        role: 'user',
-        parts: [{
-          text: videoPrompt
-        }]
-      }],
-      generationConfig: {
-        maxOutputTokens: 1024,
-        temperature: 0.2,
-      },
-      safetySettings: [
-        {
-          category: 'HARM_CATEGORY_DANGEROUS_CONTENT',
-          threshold: 'BLOCK_MEDIUM_AND_ABOVE'
+    let lastError = null;
+
+    for (const modelId of models) {
+      try {
+        console.log(`Attempting video generation with model: ${modelId}`);
+
+        const videoPrompt = referenceImageAnalysis 
+          ? `jewelry product video: ${prompt}, inspired by: ${referenceImageAnalysis}. MUST BE: pure white background, rotating three-quarter view showcase, professional studio lighting, sparkling reflections, smooth rotation, 360-degree turn, luxury presentation`
+          : `jewelry product video: ${prompt}. MUST BE: pure white background, rotating three-quarter view showcase, professional studio lighting, sparkling reflections, smooth rotation, 360-degree turn, luxury presentation`;
+
+        // Step 1: Start the long-running video generation operation
+        const startUrl = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/${modelId}:predictLongRunning`;
+
+        const requestBody = {
+          instances: [{
+            prompt: videoPrompt
+          }],
+          parameters: {
+            sampleCount: 1,
+            aspectRatio: "1:1", // Square aspect ratio for jewelry showcase
+            personGeneration: "disallow", // Don't generate people
+            negativePrompt: "people, hands, fingers, human, person, face, body, colored background, dark background, gray background, black background, textured background, pattern background, multiple items, text, watermark, blurry, low quality"
+          }
+        };
+
+        const { token: accessToken } = await authClient.getAccessToken();
+
+        console.log('Starting video generation operation...');
+        const startResponse = await axios.post(startUrl, requestBody, {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          },
+          timeout: 30000
+        });
+
+        if (!startResponse.data || !startResponse.data.name) {
+          throw new Error('No operation ID returned from video generation start');
         }
-      ]
-    };
 
-    const response = await model.generateContent(request);
-    
-    if (response.response && response.response.candidates && response.response.candidates[0]) {
-      const candidate = response.response.candidates[0];
-      
-      if (candidate.content && candidate.content.parts && candidate.content.parts[0]) {
-        const videoPart = candidate.content.parts[0];
+        const operationName = startResponse.data.name;
+        const operationId = operationName.split('/').pop();
         
-        if (videoPart.inlineData && videoPart.inlineData.data) {
-          const videoBuffer = Buffer.from(videoPart.inlineData.data, 'base64');
-          const filename = `jewelry-video-${Date.now()}.mp4`;
-          const publicUrl = await uploadImageToStorage(videoBuffer, filename, 'video/mp4');
+        console.log(`Video generation started. Operation ID: ${operationId}`);
+
+        // Step 2: Poll for completion
+        const pollUrl = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/${modelId}:fetchPredictOperation`;
+        
+        const maxPollAttempts = 60; // 5 minutes max (5 seconds * 60)
+        let pollAttempts = 0;
+        
+        while (pollAttempts < maxPollAttempts) {
+          console.log(`Polling attempt ${pollAttempts + 1}/${maxPollAttempts}...`);
           
-          return {
-            dataUrl: `data:video/mp4;base64,${videoPart.inlineData.data}`,
-            publicUrl: publicUrl,
-            filename: filename,
-            type: 'video'
-          };
+          // Wait 5 seconds before each poll
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          
+          try {
+            const pollResponse = await axios.post(pollUrl, {
+              operationName: operationName
+            }, {
+              headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Content-Type': 'application/json'
+              },
+              timeout: 30000
+            });
+
+            const operation = pollResponse.data;
+            
+            if (operation.done === true) {
+              console.log('Video generation completed!');
+              
+              if (operation.error) {
+                throw new Error(`Video generation failed: ${JSON.stringify(operation.error)}`);
+              }
+              
+              if (operation.response && operation.response.predictions && operation.response.predictions[0]) {
+                const prediction = operation.response.predictions[0];
+                
+                // Handle different response formats
+                let videoData = null;
+                let mimeType = 'video/mp4';
+                
+                if (prediction.bytesBase64Encoded) {
+                  videoData = prediction.bytesBase64Encoded;
+                } else if (prediction.videoBytes) {
+                  videoData = prediction.videoBytes;
+                } else if (prediction.artifacts && prediction.artifacts[0] && prediction.artifacts[0].bytesBase64Encoded) {
+                  videoData = prediction.artifacts[0].bytesBase64Encoded;
+                } else {
+                  console.log('Prediction structure:', JSON.stringify(prediction, null, 2));
+                  throw new Error('No video data found in completed operation response');
+                }
+                
+                if (videoData) {
+                  const videoBuffer = Buffer.from(videoData, 'base64');
+                  const filename = `jewelry-video-${Date.now()}.mp4`;
+                  const publicUrl = await uploadImageToStorage(videoBuffer, filename, 'video/mp4');
+                  
+                  return {
+                    dataUrl: `data:video/mp4;base64,${videoData}`,
+                    publicUrl: publicUrl,
+                    filename: filename,
+                    type: 'video'
+                  };
+                }
+              }
+              
+              throw new Error('Video generation completed but no video data found');
+            }
+            
+            // Operation still in progress, continue polling
+            pollAttempts++;
+            
+          } catch (pollError) {
+            console.error(`Polling error on attempt ${pollAttempts + 1}:`, pollError.message);
+            pollAttempts++;
+            
+            // If this is not the last attempt, continue
+            if (pollAttempts < maxPollAttempts) {
+              continue;
+            } else {
+              throw pollError;
+            }
+          }
+        }
+        
+        throw new Error(`Video generation timed out after ${maxPollAttempts} polling attempts`);
+        
+      } catch (modelError) {
+        console.error(`Model ${modelId} failed:`, modelError.message);
+        lastError = modelError;
+        
+        // If this is not the last model, try the next one
+        if (modelId !== models[models.length - 1]) {
+          console.log(`Trying next model...`);
+          continue;
         }
       }
     }
-
-    throw new Error('No video generated in response');
+    
+    // If we get here, all models failed
+    throw new Error(`All video generation models failed. Last error: ${lastError?.message || 'Unknown error'}`);
 
   } catch (error) {
-    console.error('Veo 3 video generation error:', error);
-    
-    // If Veo 3 Fast fails, try standard Veo 3
-    if (error.message.includes('not found') || error.message.includes('404')) {
-      try {
-        console.log('Trying standard Veo 3 model...');
-        const fallbackModel = vertexAI.getGenerativeModel({
-          model: 'veo-3.0-generate-001',
-        });
-        
-        const fallbackResponse = await fallbackModel.generateContent(request);
-        
-        if (fallbackResponse.response && fallbackResponse.response.candidates && fallbackResponse.response.candidates[0]) {
-          const candidate = fallbackResponse.response.candidates[0];
-          
-          if (candidate.content && candidate.content.parts && candidate.content.parts[0]) {
-            const videoPart = candidate.content.parts[0];
-            
-            if (videoPart.inlineData && videoPart.inlineData.data) {
-              const videoBuffer = Buffer.from(videoPart.inlineData.data, 'base64');
-              const filename = `jewelry-video-${Date.now()}.mp4`;
-              const publicUrl = await uploadImageToStorage(videoBuffer, filename, 'video/mp4');
-              
-              return {
-                dataUrl: `data:video/mp4;base64,${videoPart.inlineData.data}`,
-                publicUrl: publicUrl,
-                filename: filename,
-                type: 'video'
-              };
-            }
-          }
-        }
-      } catch (fallbackError) {
-        console.error('Fallback Veo 3 also failed:', fallbackError);
-        
-        // Try Veo 2 as final fallback
-        try {
-          console.log('Trying Veo 2 as final fallback...');
-          const veo2Model = vertexAI.getGenerativeModel({
-            model: 'veo-2.0-generate-001',
-          });
-          
-          const veo2Response = await veo2Model.generateContent(request);
-          
-          if (veo2Response.response && veo2Response.response.candidates && veo2Response.response.candidates[0]) {
-            const candidate = veo2Response.response.candidates[0];
-            
-            if (candidate.content && candidate.content.parts && candidate.content.parts[0]) {
-              const videoPart = candidate.content.parts[0];
-              
-              if (videoPart.inlineData && videoPart.inlineData.data) {
-                const videoBuffer = Buffer.from(videoPart.inlineData.data, 'base64');
-                const filename = `jewelry-video-${Date.now()}.mp4`;
-                const publicUrl = await uploadImageToStorage(videoBuffer, filename, 'video/mp4');
-                
-                return {
-                  dataUrl: `data:video/mp4;base64,${videoPart.inlineData.data}`,
-                  publicUrl: publicUrl,
-                  filename: filename,
-                  type: 'video'
-                };
-              }
-            }
-          }
-        } catch (veo2Error) {
-          console.error('All Veo models failed:', veo2Error);
-          throw new Error('Video generation not available. Please try generating an image instead.');
-        }
-      }
-    }
-    
-    throw error;
+    console.error('Video generation error:', error);
+    throw new Error(`Video generation failed: ${error.message}`);
   }
 }
 
