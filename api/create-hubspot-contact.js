@@ -42,7 +42,7 @@ module.exports = async function handler(req, res) {
       downloads_count: sessionData.downloadsCount,
       designs_shared_count: sessionData.sharesCount,
       first_jewelry_interest: sessionData.firstJewelryType,
-      last_chat_date: new Date().toISOString(),
+      last_chat_date: new Date().toISOString().split('T')[0],
       conversion_trigger: conversionTrigger
     };
 
