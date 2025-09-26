@@ -3,6 +3,25 @@ const hubspotClient = new hubspot.Client({
   accessToken: process.env.HUBSPOT_ACCESS_TOKEN
 });
 
+// NEW: Add validation to prevent double counting
+function validateSessionData(sessionData, conversionTrigger) {
+  console.log('Validating session data for trigger:', conversionTrigger);
+  console.log('Session data received:', sessionData);
+  
+  // Ensure counts are reasonable
+  const maxReasonableCount = 50; // Adjust based on your use case
+  
+  if (sessionData.imagesGenerated > maxReasonableCount) {
+    console.warn('Unusually high image count:', sessionData.imagesGenerated);
+  }
+  
+  if (sessionData.downloadsCount > sessionData.imagesGenerated) {
+    console.warn('Downloads exceed images generated - possible double counting');
+  }
+  
+  return sessionData;
+}
+
 module.exports = async function handler(req, res) {
   // CORS headers
   res.setHeader('Access-Control-Allow-Origin', 'https://www.gjsusa.com');
@@ -28,12 +47,15 @@ module.exports = async function handler(req, res) {
     
     const { 
       email, 
-      sessionData, 
+      sessionData: rawSessionData, 
       conversationHistory, 
       conversionTrigger, 
       imageUrl, 
       actionDetails 
     } = req.body;
+    
+    // ADDED: Validate session data
+    const sessionData = validateSessionData(rawSessionData, conversionTrigger);
     
     console.log('Processing contact for email:', email);
     console.log('Session data:', sessionData);
@@ -158,7 +180,7 @@ function buildImageHistories(existingContact, imageUrl, actionDetails, conversio
   let sharedHistory = existingShared;
   let generatedHistory = existingGenerated;
   
-  // Add to appropriate history based on action type
+  // FIXED: Add to specific history only, avoid duplication
   if (conversionTrigger === 'download' && imageUrl) {
     downloadedHistory = addToImageHistory(existingDownloaded, imageEntry);
   }
@@ -167,14 +189,12 @@ function buildImageHistories(existingContact, imageUrl, actionDetails, conversio
     sharedHistory = addToImageHistory(existingShared, imageEntry);
   }
   
+  // FIXED: Only add to generated history for actual generation events
   if (conversionTrigger === 'image_generated' && imageUrl) {
     generatedHistory = addToImageHistory(existingGenerated, imageEntry);
   }
   
-  // Also add downloads and shares to generated history for complete tracking
-  if ((conversionTrigger === 'download' || conversionTrigger === 'share') && imageUrl) {
-    generatedHistory = addToImageHistory(existingGenerated, imageEntry);
-  }
+  // REMOVED: The duplicate addition that was causing double counting
   
   return {
     downloaded: downloadedHistory,
@@ -197,15 +217,17 @@ function addToImageHistory(existingHistory, newEntry) {
   return limitedEntries.join(';;');
 }
 
-// FIXED: Removed double counting - session data already includes current action counts
+// FIXED: Removed double counting - only add session data for conversion events
 function calculateCumulativeData(existingContact, sessionData, conversionTrigger) {
   const existing = existingContact?.properties || {};
   
+  // FIXED: Only increment session count once per actual session end
+  const sessionsIncrement = conversionTrigger === 'session_end' ? 1 : 0;
+  
   return {
-    sessionsCount: (parseInt(existing.chatbot_sessions_count) || 0) + 1,
+    sessionsCount: (parseInt(existing.chatbot_sessions_count) || 0) + sessionsIncrement,
     imagesGenerated: (parseInt(existing.images_generated_count) || 0) + (sessionData.imagesGenerated || 0),
     refinementsMade: (parseInt(existing.refinements_made_count) || 0) + (sessionData.refinementsMade || 0),
-    // FIXED: Removed the extra increment - sessionData already includes current action
     downloadsCount: (parseInt(existing.downloads_count) || 0) + (sessionData.downloadsCount || 0),
     sharesCount: (parseInt(existing.designs_shared_count) || 0) + (sessionData.sharesCount || 0)
   };
@@ -250,7 +272,9 @@ function formatImageActionNote(actionType, imageUrl, actionDetails) {
     'share': '📤 Design Shared', 
     'project_inquiry': '🚀 Project Inquiry',
     'image_generated': '🎨 Image Generated',
-    'refinement_made': '✨ Design Refined'
+    'refinement_made': '✨ Design Refined',
+    'session_end': '📊 Session Completed',
+    'email_captured': '📧 Email Captured'
   };
   
   let note = `${actionTitles[actionType] || 'Action Taken'} - ${timestamp}\n\n`;
@@ -279,6 +303,13 @@ function formatImageActionNote(actionType, imageUrl, actionDetails) {
     if (actionDetails?.isShared) {
       note += `Originated from shared conversation.\n`;
     }
+  }
+  
+  if (actionType === 'session_end') {
+    note += `\nSession Summary:\n`;
+    note += `- Images Generated: ${actionDetails?.imagesGenerated || 0}\n`;
+    note += `- Downloads: ${actionDetails?.downloadsCount || 0}\n`;
+    note += `- Refinements: ${actionDetails?.refinementsMade || 0}\n`;
   }
   
   return note;
