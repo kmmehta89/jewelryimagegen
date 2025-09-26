@@ -23,11 +23,12 @@ function validateSessionData(sessionData, conversionTrigger) {
 }
 
 module.exports = async function handler(req, res) {
-  // CORS headers
+  // CORS headers - set these for ALL requests
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   
+  // Handle preflight OPTIONS request
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
@@ -35,6 +36,7 @@ module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
+  // ... rest of your code
 
   try {
     console.log('Testing HubSpot token...');
