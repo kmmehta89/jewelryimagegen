@@ -1,3 +1,4 @@
+// <!-- Test environment -->
 // api/chat.js - Optimized backend for jewelry image generation
 const { Anthropic } = require('@anthropic-ai/sdk');
 const { GoogleAuth } = require('google-auth-library');
