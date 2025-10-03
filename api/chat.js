@@ -26,24 +26,6 @@ const storage = new Storage({
 
 const bucketName = process.env.GOOGLE_STORAGE_BUCKET || 'jewelry-designs-bucket';
 
-// Analytics tracking helper
-async function trackAnalyticsEvent(eventType, brand = 'default') {
-  try {
-    const baseUrl = process.env.VERCEL_ENV === 'production'
-      ? 'https://jewelryimagegen.vercel.app'
-      : 'https://jewelryimagegen-git-staging-kunal-mehtas-projects-45c036d5.vercel.app';
-    
-    await fetch(`${baseUrl}/api/analytics`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ eventType, data: { brand } })
-    });
-  } catch (error) {
-    console.error('Analytics tracking failed:', error.message);
-    // Don't throw - analytics failure shouldn't break the main flow
-  }
-}
-
 // Optimized multer configuration
 const upload = multer({
   storage: multer.memoryStorage(),
