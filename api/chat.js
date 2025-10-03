@@ -338,15 +338,7 @@ The GENERATE_IMAGE description should be brief: just the jewelry type, main mate
           baseImageDescription
         );
         console.log('Image generated successfully');
-        
-        // NEW: Track image generation globally
-        await trackAnalyticsEvent('image_generated', brand);
-        
-        // NEW: Track refinements separately
-        if (isRefinementRequest) {
-          await trackAnalyticsEvent('refinement', brand);
-        }
-        
+                       
       } catch (imageError) {
         console.error('Vertex AI image generation failed:', imageError);
         throw imageError;
