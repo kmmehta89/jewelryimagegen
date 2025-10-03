@@ -1,5 +1,4 @@
-// <!-- Test environment -->
-// api/chat.js - Optimized backend for jewelry image generation
+// api/chat.js - Optimized backend with analytics tracking
 const { Anthropic } = require('@anthropic-ai/sdk');
 const { GoogleAuth } = require('google-auth-library');
 const axios = require('axios');
@@ -27,12 +26,30 @@ const storage = new Storage({
 
 const bucketName = process.env.GOOGLE_STORAGE_BUCKET || 'jewelry-designs-bucket';
 
+// Analytics tracking helper
+async function trackAnalyticsEvent(eventType, brand = 'default') {
+  try {
+    const baseUrl = process.env.VERCEL_ENV === 'production'
+      ? 'https://jewelryimagegen.vercel.app'
+      : 'https://jewelryimagegen-git-staging-kunal-mehtas-projects-45c036d5.vercel.app';
+    
+    await fetch(`${baseUrl}/api/analytics`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ eventType, data: { brand } })
+    });
+  } catch (error) {
+    console.error('Analytics tracking failed:', error.message);
+    // Don't throw - analytics failure shouldn't break the main flow
+  }
+}
+
 // Optimized multer configuration
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB limit
-    fieldSize: 5 * 1024 * 1024,  // 5MB for form fields
+    fileSize: 10 * 1024 * 1024,
+    fieldSize: 5 * 1024 * 1024,
     fields: 20,
     fieldNameSize: 100
   },
@@ -109,7 +126,6 @@ async function generateImageWithVertex(prompt, referenceImageAnalysis = '', isRe
 
   const url = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/imagen-3.0-generate-001:predict`;
 
-  // Build catalog prompt based on context
   let catalogPrompt;
   if (isRefinement && baseImageDescription) {
     catalogPrompt = `jewelry product photography refinement: Starting with ${baseImageDescription}, now ${prompt}. MUST BE: pure white background, three-quarter view angle, professional studio lighting, sparkling reflections`;
@@ -163,10 +179,7 @@ async function generateImageWithVertex(prompt, referenceImageAnalysis = '', isRe
   throw new Error('No image generated in response');
 }
 
-
-
 module.exports = async function handler(req, res) {
-  // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -180,16 +193,21 @@ module.exports = async function handler(req, res) {
   }
   
   try {
-    // Handle multipart form data
     await new Promise((resolve, reject) => {
       upload.single('referenceImage')(req, res, (err) => {
         err ? reject(err) : resolve();
       });
     });
 
-    const { message, conversationHistory = [], isRefinement = 'false', baseImageData, refinementCount = '0' } = req.body;
+    const { 
+      message, 
+      conversationHistory = [], 
+      isRefinement = 'false', 
+      baseImageData, 
+      refinementCount = '0',
+      brand = 'default' // NEW: Get brand from request
+    } = req.body;
     
-    // Parse conversation history
     let parsedHistory = [];
     try {
       parsedHistory = typeof conversationHistory === 'string' 
@@ -199,7 +217,6 @@ module.exports = async function handler(req, res) {
       console.log('Using empty conversation history due to parse error');
     }
 
-    // Parse refinement data
     const isRefinementRequest = isRefinement === 'true';
     let baseImageInfo = null;
     if (isRefinementRequest && baseImageData) {
@@ -214,13 +231,13 @@ module.exports = async function handler(req, res) {
       isRefinement: isRefinementRequest,
       hasBaseImage: !!baseImageInfo,
       refinementCount,
-      messageLength: message?.length || 0
+      messageLength: message?.length || 0,
+      brand // NEW: Log brand
     });
     
     let referenceImageData = null;
     let referenceImageAnalysis = '';
     
-    // Process reference image if provided
     if (req.file) {
       console.log('Processing reference image:', req.file.originalname);
       
@@ -250,7 +267,6 @@ module.exports = async function handler(req, res) {
       }
     }
 
-    // Claude consultation with refinement context
     let systemPrompt = `You are a jewelry designer assistant. Keep responses brief and focused (2-3 sentences max). A retailer is asking you to create a catalog image of jewelry based on a consumer request.
 
 ${referenceImageData ? `Reference image shows: ${referenceImageAnalysis}\n\nCreate a design inspired by this reference.` : ''}`;
@@ -291,7 +307,6 @@ The GENERATE_IMAGE description should be brief: just the jewelry type, main mate
     
     const claudeMessage = claudeResponse.content[0].text;
     
-    // Image generation with refinement support
     let imageResult = null;
     
     const isJewelryRequest = (
@@ -324,14 +339,20 @@ The GENERATE_IMAGE description should be brief: just the jewelry type, main mate
         );
         console.log('Image generated successfully');
         
+        // NEW: Track image generation globally
+        await trackAnalyticsEvent('image_generated', brand);
+        
+        // NEW: Track refinements separately
+        if (isRefinementRequest) {
+          await trackAnalyticsEvent('refinement', brand);
+        }
+        
       } catch (imageError) {
         console.error('Vertex AI image generation failed:', imageError);
-        // No fallback - let the error bubble up so users see the actual issue
         throw imageError;
       }
     }
     
-    // Clean response and send result
     const cleanMessage = claudeMessage.replace(/GENERATE_IMAGE:.*$/m, '').trim();
     const newRefinementCount = parseInt(refinementCount) + (isRefinementRequest ? 1 : 0);
     
