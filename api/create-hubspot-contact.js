@@ -1,15 +1,13 @@
+// api/create-hubspot-contact.js - Fixed to prevent double counting
 const hubspot = require('@hubspot/api-client');
 const hubspotClient = new hubspot.Client({
   accessToken: process.env.HUBSPOT_ACCESS_TOKEN
 });
 
-// NEW: Add validation to prevent double counting
 function validateSessionData(sessionData, conversionTrigger) {
   console.log('Validating session data for trigger:', conversionTrigger);
-  console.log('Session data received:', sessionData);
   
-  // Ensure counts are reasonable
-  const maxReasonableCount = 50; // Adjust based on your use case
+  const maxReasonableCount = 50;
   
   if (sessionData.imagesGenerated > maxReasonableCount) {
     console.warn('Unusually high image count:', sessionData.imagesGenerated);
@@ -23,12 +21,10 @@ function validateSessionData(sessionData, conversionTrigger) {
 }
 
 module.exports = async function handler(req, res) {
-  // CORS headers - set these for ALL requests
   res.setHeader('Access-Control-Allow-Origin', 'https://www.gjsusa.com');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   
-  // Handle preflight OPTIONS request
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
@@ -36,17 +32,8 @@ module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
-  // ... rest of your code
 
   try {
-    console.log('Testing HubSpot token...');
-    console.log('Token starts with:', process.env.HUBSPOT_ACCESS_TOKEN?.substring(0, 10));
-    
-    // Simple test call
-    const testResponse = await hubspotClient.crm.contacts.basicApi.getPage();
-    console.log('Token test successful');
-    console.log('Request body:', req.body);
-    
     const { 
       email, 
       sessionData: rawSessionData, 
@@ -56,15 +43,12 @@ module.exports = async function handler(req, res) {
       actionDetails 
     } = req.body;
     
-    // ADDED: Validate session data
     const sessionData = validateSessionData(rawSessionData, conversionTrigger);
     
     console.log('Processing contact for email:', email);
+    console.log('Conversion trigger:', conversionTrigger);
     console.log('Session data:', sessionData);
-    console.log('Action details:', actionDetails);
-    console.log('Image URL:', imageUrl);
     
-    // First, try to find existing contact to get current image history
     let existingContact = null;
     let contactId = null;
     
@@ -87,9 +71,10 @@ module.exports = async function handler(req, res) {
           'first_jewelry_interest',
           'last_chat_date',
           'conversion_trigger',
-          'downloaded_images_history', // New field for image history
-          'shared_images_history',     // New field for shared images
-          'generated_images_history'   // New field for all generated images
+          'downloaded_images_history',
+          'shared_images_history',
+          'generated_images_history',
+          'brand_usage' // NEW: Track which brands user has used
         ]
       });
       
@@ -102,11 +87,14 @@ module.exports = async function handler(req, res) {
       console.log('Contact search failed, will create new contact:', searchError.message);
     }
 
-    // Build image history arrays
+    // Build image history arrays (fixed to avoid duplication)
     const imageHistories = buildImageHistories(existingContact, imageUrl, actionDetails, conversionTrigger);
     
-    // Calculate cumulative values
+    // Calculate cumulative values (fixed to only count real actions)
     const cumulativeData = calculateCumulativeData(existingContact, sessionData, conversionTrigger);
+    
+    // Update brand usage
+    const brandUsage = updateBrandUsage(existingContact, actionDetails?.brand);
     
     const contactProperties = {
       email: email,
@@ -115,13 +103,13 @@ module.exports = async function handler(req, res) {
       refinements_made_count: cumulativeData.refinementsMade,
       downloads_count: cumulativeData.downloadsCount,
       designs_shared_count: cumulativeData.sharesCount,
-      first_jewelry_interest: sessionData.firstJewelryType || existingContact?.properties?.first_jewelry_interest,
+      first_jewelry_interest: sessionData.firstJewelryType || existingContact?.properties?.first_jewelry_interest || 'not specified',
       last_chat_date: new Date().toISOString().split('T')[0],
       conversion_trigger: conversionTrigger,
-      // Add image history fields
       downloaded_images_history: imageHistories.downloaded,
       shared_images_history: imageHistories.shared,
-      generated_images_history: imageHistories.generated
+      generated_images_history: imageHistories.generated,
+      brand_usage: brandUsage
     };
     
     console.log('Contact properties to send:', contactProperties);
@@ -129,25 +117,23 @@ module.exports = async function handler(req, res) {
     let response;
     
     if (contactId) {
-      // Update existing contact
       console.log('Updating existing contact...');
       response = await hubspotClient.crm.contacts.basicApi.update(contactId, {
         properties: contactProperties
       });
-      console.log('HubSpot update response:', response);
+      console.log('HubSpot update response received');
     } else {
-      // Create new contact
       console.log('Creating new contact...');
       response = await hubspotClient.crm.contacts.basicApi.create({
         properties: contactProperties,
         associations: []
       });
-      console.log('HubSpot create response:', response);
+      console.log('HubSpot create response received');
       contactId = response.id;
     }
     
     // Create a note/activity for this specific action with image URL
-    if (contactId && imageUrl) {
+    if (contactId && (imageUrl || conversionTrigger === 'email_captured')) {
       await createImageActionNote(contactId, conversionTrigger, imageUrl, actionDetails);
     }
     
@@ -170,10 +156,17 @@ module.exports = async function handler(req, res) {
 };
 
 function buildImageHistories(existingContact, imageUrl, actionDetails, conversionTrigger) {
+  if (!imageUrl) {
+    return {
+      downloaded: existingContact?.properties?.downloaded_images_history || '',
+      shared: existingContact?.properties?.shared_images_history || '',
+      generated: existingContact?.properties?.generated_images_history || ''
+    };
+  }
+  
   const timestamp = new Date().toISOString();
   const imageEntry = `${timestamp}|${imageUrl}|${actionDetails?.filename || 'unknown'}`;
   
-  // Get existing histories or initialize empty arrays
   const existingDownloaded = existingContact?.properties?.downloaded_images_history || '';
   const existingShared = existingContact?.properties?.shared_images_history || '';
   const existingGenerated = existingContact?.properties?.generated_images_history || '';
@@ -182,21 +175,14 @@ function buildImageHistories(existingContact, imageUrl, actionDetails, conversio
   let sharedHistory = existingShared;
   let generatedHistory = existingGenerated;
   
-  // FIXED: Add to specific history only, avoid duplication
-  if (conversionTrigger === 'download' && imageUrl) {
+  // FIXED: Only add to the specific history that matches the trigger
+  if (conversionTrigger === 'download') {
     downloadedHistory = addToImageHistory(existingDownloaded, imageEntry);
-  }
-  
-  if (conversionTrigger === 'share' && imageUrl) {
+  } else if (conversionTrigger === 'share') {
     sharedHistory = addToImageHistory(existingShared, imageEntry);
-  }
-  
-  // FIXED: Only add to generated history for actual generation events
-  if (conversionTrigger === 'image_generated' && imageUrl) {
+  } else if (conversionTrigger === 'image_generated') {
     generatedHistory = addToImageHistory(existingGenerated, imageEntry);
   }
-  
-  // REMOVED: The duplicate addition that was causing double counting
   
   return {
     downloaded: downloadedHistory,
@@ -206,33 +192,77 @@ function buildImageHistories(existingContact, imageUrl, actionDetails, conversio
 }
 
 function addToImageHistory(existingHistory, newEntry) {
-  // Parse existing entries
   const entries = existingHistory ? existingHistory.split(';;') : [];
   
-  // Add new entry
+  // Check if this exact entry already exists to prevent duplicates
+  if (entries.includes(newEntry)) {
+    console.log('Duplicate entry detected, skipping:', newEntry);
+    return existingHistory;
+  }
+  
   entries.push(newEntry);
   
-  // Keep only last 50 entries to avoid field size limits
+  // Keep only last 50 entries
   const limitedEntries = entries.slice(-50);
   
-  // Join back with delimiter
   return limitedEntries.join(';;');
 }
 
-// FIXED: Removed double counting - only add session data for conversion events
+// FIXED: Only increment counters based on actual conversion triggers
 function calculateCumulativeData(existingContact, sessionData, conversionTrigger) {
   const existing = existingContact?.properties || {};
   
-  // FIXED: Only increment session count once per actual session end
-  const sessionsIncrement = conversionTrigger === 'session_end' ? 1 : 0;
-  
-  return {
-    sessionsCount: (parseInt(existing.chatbot_sessions_count) || 0) + sessionsIncrement,
-    imagesGenerated: (parseInt(existing.images_generated_count) || 0) + (sessionData.imagesGenerated || 0),
-    refinementsMade: (parseInt(existing.refinements_made_count) || 0) + (sessionData.refinementsMade || 0),
-    downloadsCount: (parseInt(existing.downloads_count) || 0) + (sessionData.downloadsCount || 0),
-    sharesCount: (parseInt(existing.designs_shared_count) || 0) + (sessionData.sharesCount || 0)
+  // Start with existing values
+  let result = {
+    sessionsCount: parseInt(existing.chatbot_sessions_count) || 0,
+    imagesGenerated: parseInt(existing.images_generated_count) || 0,
+    refinementsMade: parseInt(existing.refinements_made_count) || 0,
+    downloadsCount: parseInt(existing.downloads_count) || 0,
+    sharesCount: parseInt(existing.designs_shared_count) || 0
   };
+  
+  // FIXED: Only increment specific counters based on the exact trigger
+  // Don't add bulk session data anymore - only increment on specific actions
+  switch(conversionTrigger) {
+    case 'download':
+      result.downloadsCount += 1;
+      break;
+    case 'share':
+      result.sharesCount += 1;
+      break;
+    case 'image_generated':
+      result.imagesGenerated += 1;
+      break;
+    case 'refinement_made':
+      result.refinementsMade += 1;
+      break;
+    case 'email_captured':
+      // First time email captured - add their current session totals
+      result.imagesGenerated += sessionData.imagesGenerated || 0;
+      result.refinementsMade += sessionData.refinementsMade || 0;
+      result.downloadsCount += sessionData.downloadsCount || 0;
+      result.sharesCount += sessionData.sharesCount || 0;
+      result.sessionsCount += 1;
+      break;
+    case 'session_end':
+      result.sessionsCount += 1;
+      break;
+  }
+  
+  return result;
+}
+
+function updateBrandUsage(existingContact, newBrand) {
+  if (!newBrand) return existingContact?.properties?.brand_usage || 'default';
+  
+  const existing = existingContact?.properties?.brand_usage || '';
+  const brands = existing ? existing.split(',').map(b => b.trim()) : [];
+  
+  if (!brands.includes(newBrand)) {
+    brands.push(newBrand);
+  }
+  
+  return brands.join(', ');
 }
 
 async function createImageActionNote(contactId, actionType, imageUrl, actionDetails) {
@@ -242,7 +272,7 @@ async function createImageActionNote(contactId, actionType, imageUrl, actionDeta
     const noteProperties = {
       hs_timestamp: Date.now(),
       hs_note_body: noteContent,
-      hubspot_owner_id: null // You can set a default owner if needed
+      hubspot_owner_id: null
     };
     
     await hubspotClient.crm.objects.notes.basicApi.create({
@@ -253,7 +283,7 @@ async function createImageActionNote(contactId, actionType, imageUrl, actionDeta
           types: [
             {
               associationCategory: "HUBSPOT_DEFINED",
-              associationTypeId: 202 // Note to Contact association
+              associationTypeId: 202
             }
           ]
         }
@@ -293,6 +323,10 @@ function formatImageActionNote(actionType, imageUrl, actionDetails) {
     note += `Jewelry Type: ${actionDetails.jewelryType}\n`;
   }
   
+  if (actionDetails?.brand) {
+    note += `Brand: ${actionDetails.brand}\n`;
+  }
+  
   if (actionDetails?.shareUrl) {
     note += `Share URL: ${actionDetails.shareUrl}\n`;
   }
@@ -309,6 +343,15 @@ function formatImageActionNote(actionType, imageUrl, actionDetails) {
   
   if (actionType === 'session_end') {
     note += `\nSession Summary:\n`;
+    note += `- Images Generated: ${actionDetails?.imagesGenerated || 0}\n`;
+    note += `- Downloads: ${actionDetails?.downloadsCount || 0}\n`;
+    note += `- Refinements: ${actionDetails?.refinementsMade || 0}\n`;
+  }
+  
+  if (actionType === 'email_captured') {
+    note += `\n🎯 First Contact Made\n`;
+    note += `User provided email for the first time.\n`;
+    note += `Session activity before email capture:\n`;
     note += `- Images Generated: ${actionDetails?.imagesGenerated || 0}\n`;
     note += `- Downloads: ${actionDetails?.downloadsCount || 0}\n`;
     note += `- Refinements: ${actionDetails?.refinementsMade || 0}\n`;
